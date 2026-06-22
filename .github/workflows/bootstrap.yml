@@ -24,6 +24,7 @@ jobs:
         run: |
           mkdir -p /tmp/eztodo-source
           unzip -q /tmp/eztodo-source.zip -d /tmp/eztodo-source
+          rm -f /tmp/eztodo-source/.github/workflows/ci.yml
           rsync -a /tmp/eztodo-source/ ./
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
