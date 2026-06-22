@@ -1,7 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
+  activeCommonSettingItems,
+  defaultCommonSettings,
+  normalizeCommonSettingItem,
+  normalizeCommonSettings,
+  summarizeDailyReportResources,
+} from "./commonSettings.js";
+import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Bell,
   Building2,
   CalendarDays,
@@ -24,6 +33,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Settings2,
   ShieldCheck,
   StickyNote,
   Trash2,
@@ -96,6 +106,7 @@ const I = {
   materials: Package,
   todos: CheckSquare,
   photos: Camera,
+  commonSettings: Settings2,
 };
 
 const mods = [
@@ -110,13 +121,14 @@ const mods = [
   ["schedule", "預定進度"],
   ["meetings", "會議紀錄"],
   ["daily", "施工日報"],
+  ["commonSettings", "常用設定"],
   ["defects", "缺失改善"],
   ["materials", "材料庫存"],
   ["todos", "待辦事項"],
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26052701";
+const APP_VERSION = "eztodo_26062201";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -1775,7 +1787,9 @@ function dailyReportsPrintHtml({ project, reports, from, to, includePhotos }) {
                     <h3>機具使用</h3>
                     ${dailyReportRowsHtml(report.equipment || [], [
                       ["name", "機具"],
+                      ["specification", "規格"],
                       ["quantity", "數量"],
+                      ["unit", "單位"],
                       ["note", "備註"],
                     ])}
                   </section>
@@ -1821,54 +1835,6 @@ function formatResourceQuantity(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return 0;
   return Number.isInteger(number) ? number : Number(number.toFixed(2));
-}
-
-function summarizeDailyReportResources(reports = []) {
-  const tradeMap = {};
-  const materialMap = {};
-  const equipmentMap = {};
-  let totalWorkers = 0;
-
-  function addQuantity(map, key, quantity, unit = "") {
-    const name = String(key || "").trim() || "未分類";
-    const amount = Number(quantity || 0);
-    if (!map[name]) {
-      map[name] = { name, quantity: 0, entries: 0, unit: unit || "" };
-    }
-    map[name].quantity += Number.isFinite(amount) ? amount : 0;
-    map[name].entries += 1;
-    if (!map[name].unit && unit) map[name].unit = unit;
-  }
-
-  reports.forEach((report) => {
-    (report.work || []).forEach((row) => {
-      const name = String(row.trade || "").trim() || "未分類工種";
-      const workers = Number(row.workers || 0);
-      if (!tradeMap[name]) tradeMap[name] = { name, workers: 0, entries: 0 };
-      tradeMap[name].workers += Number.isFinite(workers) ? workers : 0;
-      tradeMap[name].entries += 1;
-      totalWorkers += Number.isFinite(workers) ? workers : 0;
-    });
-
-    (report.materials || []).forEach((row) => {
-      addQuantity(materialMap, row.name, row.quantity, row.unit);
-    });
-
-    (report.equipment || []).forEach((row) => {
-      addQuantity(equipmentMap, row.name, row.quantity);
-    });
-  });
-
-  const sortByValue = (items, key) =>
-    Object.values(items).sort((a, b) => (Number(b[key]) || 0) - (Number(a[key]) || 0));
-
-  return {
-    reportCount: reports.length,
-    totalWorkers,
-    tradeTotals: sortByValue(tradeMap, "workers"),
-    materialTotals: sortByValue(materialMap, "quantity"),
-    equipmentTotals: sortByValue(equipmentMap, "quantity"),
-  };
 }
 
 function meetingRecordsPrintHtml({ project, records, from, to, includeAttachments }) {
@@ -2987,6 +2953,96 @@ function SelectGroup({ value, onChange, type, placeholder }) {
       otherPlaceholder="請輸入自訂項目"
       className="space-y-2"
     />
+  );
+}
+
+const quickAddOptionValue = "__quick_add_common_setting__";
+
+function CommonSettingSelect({
+  value,
+  items,
+  placeholder,
+  onChange,
+  onQuickAdd,
+  quickAddLabel,
+}) {
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickName, setQuickName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const activeItems = items.filter((item) => item.isActive);
+  const hasCurrentValue = value && !activeItems.some((item) => item.name === value);
+
+  async function submitQuickAdd() {
+    const name = quickName.trim();
+    if (!name) {
+      setError("請輸入名稱");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      const item = await onQuickAdd(name);
+      onChange(item.name, item);
+      setQuickName("");
+      setQuickOpen(false);
+    } catch (quickAddError) {
+      setError(quickAddError.message || "新增常用設定失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <select
+        value={value || ""}
+        onChange={(event) => {
+          if (event.target.value === quickAddOptionValue) {
+            setQuickOpen(true);
+            return;
+          }
+          const item = activeItems.find((candidate) => candidate.name === event.target.value);
+          onChange(event.target.value, item || null);
+        }}
+        className="w-full rounded-xl border bg-white px-3 py-2 outline-none"
+      >
+        <option value="">{placeholder}</option>
+        {hasCurrentValue ? <option value={value}>{value}</option> : null}
+        {activeItems.map((item) => (
+          <option key={item.id} value={item.name}>
+            {item.name}
+          </option>
+        ))}
+        <option value={quickAddOptionValue}>＋ 新增至常用設定</option>
+      </select>
+      {quickOpen ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <p className="mb-2 text-xs font-medium text-slate-600">{quickAddLabel}</p>
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+            <Input value={quickName} onChange={setQuickName} ph="輸入名稱" />
+            <Button type="button" size="sm" onClick={submitQuickAdd} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              新增並套用
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setQuickOpen(false);
+                setQuickName("");
+                setError("");
+              }}
+            >
+              取消
+            </Button>
+          </div>
+          {error ? <p className="mt-2 text-xs text-red-600">{error}</p> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -4384,7 +4440,9 @@ function ResourceTotalColumn({ title, emptyText, items, renderValue }) {
             <div key={item.name} className="flex items-start justify-between gap-3 rounded-xl bg-white p-3 text-sm">
               <div className="min-w-0">
                 <p className="break-words font-medium text-slate-900">{item.name}</p>
-                <p className="mt-1 text-xs text-slate-500">紀錄 {item.entries} 筆</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  紀錄 {item.entries} 筆｜來源：{item.sourceReports} 筆施工日報
+                </p>
               </div>
               <b className="shrink-0 whitespace-nowrap text-slate-900">{renderValue(item)}</b>
             </div>
@@ -4397,8 +4455,8 @@ function ResourceTotalColumn({ title, emptyText, items, renderValue }) {
   );
 }
 
-function DailyResourceSummary({ reports = [] }) {
-  const summary = summarizeDailyReportResources(reports);
+function DailyResourceSummary({ reports = [], commonSettings }) {
+  const summary = summarizeDailyReportResources(reports, commonSettings);
 
   return (
     <Card className="lg:col-span-3">
@@ -4440,7 +4498,9 @@ function DailyResourceSummary({ reports = [] }) {
             title="機具設備使用累計"
             emptyText="尚未有機具設備紀錄。"
             items={summary.equipmentTotals}
-            renderValue={(item) => `${formatResourceQuantity(item.quantity)} 台次`}
+            renderValue={(item) =>
+              `${formatResourceQuantity(item.quantity)}${item.unit ? ` ${item.unit}` : ""}`
+            }
           />
         </div>
       </CardContent>
@@ -4533,7 +4593,15 @@ function ClaimDetailRows({ rows, onChange, onAdd, onRemove }) {
   );
 }
 
-function Dashboard({ p, claims, memoItems, todoItems, contractItems, dailyReports }) {
+function Dashboard({
+  p,
+  claims,
+  memoItems,
+  todoItems,
+  contractItems,
+  dailyReports,
+  commonSettings,
+}) {
   const m = p.nextClaim || "2026/05";
   const total = sum(claims, m);
   const summary = byTrade(claims, m);
@@ -4574,7 +4642,7 @@ function Dashboard({ p, claims, memoItems, todoItems, contractItems, dailyReport
         <DashboardCalendar className="lg:col-span-2" project={p} todos={todoItems} memos={memoItems} />
         <ProjectMembers project={p} />
         <VendorContacts contracts={contractItems} />
-        <DailyResourceSummary reports={dailyReports} />
+        <DailyResourceSummary reports={dailyReports} commonSettings={commonSettings} />
       </div>
     </div>
   );
@@ -5832,12 +5900,328 @@ function Checklists({ p }) {
   );
 }
 
-function Daily({ p, records = {} }) {
-  const empty = {
-    work: { trade: "", workers: "", description: "", note: "" },
-    mat: { name: "", spec: "", quantity: "", unit: "", note: "" },
-    eq: { name: "", quantity: "", note: "" },
+const commonSettingSections = [
+  {
+    type: "crews",
+    title: "常用工班",
+    singular: "工班",
+    description: "統一工班名稱與統計分類，施工日報只顯示啟用項目。",
+  },
+  {
+    type: "materials",
+    title: "常用材料",
+    singular: "材料",
+    description: "管理常用材料及預設單位，供施工日報與後續庫存功能共用。",
+  },
+  {
+    type: "equipment",
+    title: "常用機具設備",
+    singular: "機具設備",
+    description: "管理設備名稱、規格與預設計量單位。",
+  },
+];
+
+function commonSettingDraft(type, item = {}) {
+  return {
+    id: item.id || "",
+    name: item.name || "",
+    unit: item.unit || "",
+    specification: item.specification || "",
+    statisticsCategory: item.statisticsCategory || item.name || "",
+    aliases: (item.aliases || []).join("、"),
+    isActive: item.isActive ?? true,
+    type,
   };
+}
+
+function CommonSettings({ p, settings, onSave, loading, error }) {
+  const [activeType, setActiveType] = useState("crews");
+  const [draft, setDraft] = useState(() => commonSettingDraft("crews"));
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  const section = commonSettingSections.find((item) => item.type === activeType);
+  const items = [...settings[activeType]].sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "zh-Hant"),
+  );
+
+  function resetDraft(type = activeType) {
+    setDraft(commonSettingDraft(type));
+    setFormError("");
+  }
+
+  async function persistCollection(nextItems) {
+    setBusy(true);
+    setFormError("");
+    try {
+      await onSave({
+        ...settings,
+        [activeType]: nextItems.map((item, index) => ({
+          ...item,
+          sortOrder: index + 1,
+        })),
+      });
+    } catch (saveError) {
+      setFormError(saveError.message || "常用設定儲存失敗");
+      throw saveError;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveDraft() {
+    const name = draft.name.trim();
+    if (!name) {
+      setFormError(`請輸入${section.singular}名稱`);
+      return;
+    }
+    const duplicate = items.find(
+      (item) => item.name.trim().toLowerCase() === name.toLowerCase() && item.id !== draft.id,
+    );
+    if (duplicate) {
+      setFormError(`已有同名${section.singular}`);
+      return;
+    }
+
+    const nextItem = normalizeCommonSettingItem(
+      {
+        ...draft,
+        id: draft.id || `${activeType}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        name,
+        statisticsCategory: draft.statisticsCategory.trim() || name,
+        aliases: draft.aliases,
+        sortOrder: draft.id
+          ? items.find((item) => item.id === draft.id)?.sortOrder || items.length + 1
+          : items.length + 1,
+      },
+      items.length,
+      activeType,
+    );
+    const nextItems = draft.id
+      ? items.map((item) => (item.id === draft.id ? nextItem : item))
+      : [...items, nextItem];
+    await persistCollection(nextItems);
+    resetDraft();
+  }
+
+  async function toggleItem(item) {
+    await persistCollection(
+      items.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, isActive: !candidate.isActive } : candidate,
+      ),
+    );
+  }
+
+  async function moveItem(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= items.length) return;
+    const nextItems = [...items];
+    [nextItems[index], nextItems[target]] = [nextItems[target], nextItems[index]];
+    await persistCollection(nextItems);
+  }
+
+  return (
+    <div>
+      <Header title="常用設定" sub={`目前工地：${p.name}｜統一施工日報選項與統計名稱`} />
+      {error || formError ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error || formError}
+        </div>
+      ) : null}
+      <div className="mb-4 grid gap-2 sm:grid-cols-3">
+        {commonSettingSections.map((item) => (
+          <Button
+            key={item.type}
+            type="button"
+            variant={activeType === item.type ? "primary" : "outline"}
+            onClick={() => {
+              setActiveType(item.type);
+              resetDraft(item.type);
+            }}
+          >
+            {item.title}
+          </Button>
+        ))}
+      </div>
+      <Card className="mb-4">
+        <CardContent className="p-5">
+          <h2 className="text-lg font-bold">{draft.id ? `編輯${section.singular}` : `新增${section.singular}`}</h2>
+          <p className="mt-1 text-sm text-slate-500">{section.description}</p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <label>
+              <span className="text-sm font-medium">{section.singular}名稱</span>
+              <div className="mt-2">
+                <Input
+                  value={draft.name}
+                  onChange={(name) =>
+                    setDraft((current) => ({
+                      ...current,
+                      name,
+                      statisticsCategory:
+                        current.statisticsCategory === current.name
+                          ? name
+                          : current.statisticsCategory,
+                    }))
+                  }
+                  ph={`例如：${activeType === "crews" ? "泥作工班" : activeType === "materials" ? "水泥" : "挖土機"}`}
+                />
+              </div>
+            </label>
+            <label>
+              <span className="text-sm font-medium">統計分類</span>
+              <div className="mt-2">
+                <Input
+                  value={draft.statisticsCategory}
+                  onChange={(statisticsCategory) => setDraft({ ...draft, statisticsCategory })}
+                  ph="Dashboard 統一顯示名稱"
+                />
+              </div>
+            </label>
+            {activeType !== "crews" ? (
+              <label>
+                <span className="text-sm font-medium">預設單位</span>
+                <div className="mt-2">
+                  <Input
+                    value={draft.unit}
+                    onChange={(unit) => setDraft({ ...draft, unit })}
+                    ph={activeType === "materials" ? "例如：包、公斤、立方米" : "例如：台次、台班"}
+                  />
+                </div>
+              </label>
+            ) : null}
+            {activeType === "equipment" ? (
+              <label>
+                <span className="text-sm font-medium">規格</span>
+                <div className="mt-2">
+                  <Input
+                    value={draft.specification}
+                    onChange={(specification) => setDraft({ ...draft, specification })}
+                    ph="例如：120 型"
+                  />
+                </div>
+              </label>
+            ) : null}
+            <label className="md:col-span-2">
+              <span className="text-sm font-medium">同義詞 / AI 映射名稱</span>
+              <div className="mt-2">
+                <Input
+                  value={draft.aliases}
+                  onChange={(aliases) => setDraft({ ...draft, aliases })}
+                  ph="以逗號或頓號分隔，例如：泥作、泥作工、泥作班"
+                />
+              </div>
+            </label>
+            <ActionBar className="md:col-span-2">
+              {draft.id ? (
+                <Button type="button" variant="outline" onClick={() => resetDraft()}>
+                  取消編輯
+                </Button>
+              ) : null}
+              <Button type="button" onClick={saveDraft} disabled={busy || loading}>
+                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {draft.id ? "更新" : "新增"}
+              </Button>
+            </ActionBar>
+          </div>
+        </CardContent>
+      </Card>
+      <div className="grid gap-3">
+        {items.map((item, index) => (
+          <Card key={item.id}>
+            <CardContent className="p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-bold">{item.name}</h3>
+                    <Badge>{item.isActive ? "啟用中" : "已停用"}</Badge>
+                    <Badge>統計：{item.statisticsCategory || item.name}</Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-500">
+                    {item.unit ? `單位：${item.unit}｜` : ""}
+                    {item.specification ? `規格：${item.specification}｜` : ""}
+                    同義詞：{item.aliases.length ? item.aliases.join("、") : "尚未設定"}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={index === 0 || busy}
+                    onClick={() => moveItem(index, -1)}
+                    aria-label={`上移 ${item.name}`}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={index === items.length - 1 || busy}
+                    onClick={() => moveItem(index, 1)}
+                    aria-label={`下移 ${item.name}`}
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDraft(commonSettingDraft(activeType, item))}
+                  >
+                    <Pencil className="mr-1 h-4 w-4" />
+                    編輯
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={item.isActive ? "danger" : "subtle"}
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => toggleItem(item)}
+                  >
+                    {item.isActive ? "停用" : "重新啟用"}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
+  const empty = {
+    work: {
+      trade: "",
+      workers: "",
+      description: "",
+      note: "",
+      commonSettingId: "",
+      statisticsCategory: "",
+    },
+    mat: {
+      name: "",
+      spec: "",
+      quantity: "",
+      unit: "",
+      note: "",
+      commonSettingId: "",
+      statisticsCategory: "",
+    },
+    eq: {
+      name: "",
+      specification: "",
+      quantity: "",
+      unit: "",
+      note: "",
+      commonSettingId: "",
+      statisticsCategory: "",
+    },
+  };
+  const crewOptions = activeCommonSettingItems(commonSettings, "crews");
+  const materialOptions = activeCommonSettingItems(commonSettings, "materials");
+  const equipmentOptions = activeCommonSettingItems(commonSettings, "equipment");
   const paperInputId = useMemo(
     () => `daily-ai-source-${Math.random().toString(36).slice(2)}`,
     [],
@@ -5874,6 +6258,16 @@ function Daily({ p, records = {} }) {
   const upd = (set, id, key, value) =>
     set((items) => items.map((x) => (x.id === id ? { ...x, [key]: value } : x)));
   const add = (set, obj) => set((items) => [...items, { id: Date.now(), ...obj }]);
+  const addAfter = (set, id, obj) =>
+    set((items) => {
+      const index = items.findIndex((item) => item.id === id);
+      const next = [...items];
+      next.splice(index < 0 ? next.length : index + 1, 0, {
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        ...obj,
+      });
+      return next;
+    });
   const rem = (set, id) => set((items) => (items.length === 1 ? items : items.filter((x) => x.id !== id)));
 
   function resetDaily() {
@@ -6202,14 +6596,30 @@ function Daily({ p, records = {} }) {
             title="施工工班 / 人數 / 內容"
             list={work}
             add={() => add(setWork, empty.work)}
+            insertAfter={(id) => addAfter(setWork, id, empty.work)}
             del={(id, i) => del(`工班紀錄 ${i + 1}`, () => rem(setWork, id))}
             render={(x) => (
               <>
-                <SelectGroup
-                  type="trade"
+                <CommonSettingSelect
                   value={x.trade}
-                  onChange={(value) => upd(setWork, x.id, "trade", value)}
+                  items={crewOptions}
+                  onChange={(value, item) =>
+                    setWork((items) =>
+                      items.map((row) =>
+                        row.id === x.id
+                          ? {
+                              ...row,
+                              trade: value,
+                              commonSettingId: item?.id || "",
+                              statisticsCategory: item?.statisticsCategory || value,
+                            }
+                          : row,
+                      ),
+                    )
+                  }
+                  onQuickAdd={(name) => onQuickAddSetting("crews", name)}
                   placeholder="請選擇工班"
+                  quickAddLabel="快速新增常用工班"
                 />
                 <Input
                   type="number"
@@ -6230,14 +6640,31 @@ function Daily({ p, records = {} }) {
             title="材料使用 / 進場"
             list={mat}
             add={() => add(setMat, empty.mat)}
+            insertAfter={(id) => addAfter(setMat, id, empty.mat)}
             del={(id, i) => del(`材料紀錄 ${i + 1}`, () => rem(setMat, id))}
             render={(x) => (
               <>
-                <SelectGroup
-                  type="material"
+                <CommonSettingSelect
                   value={x.name}
-                  onChange={(value) => upd(setMat, x.id, "name", value)}
+                  items={materialOptions}
+                  onChange={(value, item) =>
+                    setMat((items) =>
+                      items.map((row) =>
+                        row.id === x.id
+                          ? {
+                              ...row,
+                              name: value,
+                              unit: row.unit || item?.unit || "",
+                              commonSettingId: item?.id || "",
+                              statisticsCategory: item?.statisticsCategory || value,
+                            }
+                          : row,
+                      ),
+                    )
+                  }
+                  onQuickAdd={(name) => onQuickAddSetting("materials", name)}
                   placeholder="請選擇材料"
+                  quickAddLabel="快速新增常用材料"
                 />
                 <Input value={x.spec} onChange={(value) => upd(setMat, x.id, "spec", value)} ph="規格" />
                 <Input
@@ -6255,14 +6682,37 @@ function Daily({ p, records = {} }) {
             title="機具使用"
             list={eq}
             add={() => add(setEq, empty.eq)}
+            insertAfter={(id) => addAfter(setEq, id, empty.eq)}
             del={(id, i) => del(`機具紀錄 ${i + 1}`, () => rem(setEq, id))}
             render={(x) => (
               <>
-                <SelectGroup
-                  type="equipment"
+                <CommonSettingSelect
                   value={x.name}
-                  onChange={(value) => upd(setEq, x.id, "name", value)}
+                  items={equipmentOptions}
+                  onChange={(value, item) =>
+                    setEq((items) =>
+                      items.map((row) =>
+                        row.id === x.id
+                          ? {
+                              ...row,
+                              name: value,
+                              specification: row.specification || item?.specification || "",
+                              unit: row.unit || item?.unit || "台次",
+                              commonSettingId: item?.id || "",
+                              statisticsCategory: item?.statisticsCategory || value,
+                            }
+                          : row,
+                      ),
+                    )
+                  }
+                  onQuickAdd={(name) => onQuickAddSetting("equipment", name)}
                   placeholder="請選擇機具"
+                  quickAddLabel="快速新增常用機具設備"
+                />
+                <Input
+                  value={x.specification}
+                  onChange={(value) => upd(setEq, x.id, "specification", value)}
+                  ph="規格"
                 />
                 <Input
                   type="number"
@@ -6270,6 +6720,7 @@ function Daily({ p, records = {} }) {
                   onChange={(value) => upd(setEq, x.id, "quantity", value)}
                   ph="數量"
                 />
+                <Input value={x.unit} onChange={(value) => upd(setEq, x.id, "unit", value)} ph="單位" />
                 <Input value={x.note} onChange={(value) => upd(setEq, x.id, "note", value)} ph="備註" />
               </>
             )}
@@ -6512,7 +6963,9 @@ function DailyReportDetails({ report }) {
         rows={report.equipment || []}
         columns={[
           ["name", "機具"],
+          ["specification", "規格"],
           ["quantity", "數量"],
+          ["unit", "單位"],
           ["note", "備註"],
         ]}
       />
@@ -7182,7 +7635,7 @@ function MeetingRecordDetails({ record }) {
   );
 }
 
-function Rows({ title, list, add, del: remove, render }) {
+function Rows({ title, list, add, insertAfter, del: remove, render }) {
   return (
     <div className="rounded-2xl border p-4 md:col-span-2">
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -7207,6 +7660,15 @@ function Rows({ title, list, add, del: remove, render }) {
               </Button>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{render(x)}</div>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3 w-full border-dashed"
+              onClick={() => insertAfter(x.id)}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              新增一筆
+            </Button>
           </div>
         ))}
       </div>
@@ -9594,6 +10056,11 @@ export default function App() {
   const dailyRecords = useProjectRecords(p, "daily", []);
   const defectRecords = useProjectRecords(p, "defects", defectSeed);
   const operationRecords = useProjectRecords(p, operationLogModule, []);
+  const commonSettingsRecords = useProjectRecords(p, "commonSettings", []);
+  const commonSettingsValue = useMemo(
+    () => normalizeCommonSettings(commonSettingsRecords.items[0] || defaultCommonSettings),
+    [commonSettingsRecords.items],
+  );
 
   useEffect(() => {
     if (useLocalPreview) return;
@@ -9651,6 +10118,64 @@ export default function App() {
     setLoginTransitionUser(null);
   }
 
+  async function persistCommonSettings(nextSettings) {
+    const normalized = {
+      ...normalizeCommonSettings(nextSettings),
+      name: "常用設定",
+      updatedAt: new Date().toISOString(),
+    };
+    const existing = commonSettingsRecords.items[0];
+    if (existing) {
+      return commonSettingsRecords.updateItem(existing.id, normalized, {
+        title: "常用設定",
+        status: "已更新",
+      });
+    }
+    return commonSettingsRecords.saveItem(normalized, {
+      title: "常用設定",
+      status: "啟用中",
+    });
+  }
+
+  async function quickAddCommonSetting(type, name) {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) throw new Error("請輸入名稱");
+    const existing = commonSettingsValue[type].find(
+      (item) => item.name.toLowerCase() === cleanName.toLowerCase(),
+    );
+    if (existing) {
+      if (!existing.isActive) {
+        await persistCommonSettings({
+          ...commonSettingsValue,
+          [type]: commonSettingsValue[type].map((item) =>
+            item.id === existing.id ? { ...item, isActive: true } : item,
+          ),
+        });
+      }
+      return { ...existing, isActive: true };
+    }
+
+    const item = normalizeCommonSettingItem(
+      {
+        id: `${type}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        name: cleanName,
+        statisticsCategory: cleanName,
+        aliases: [],
+        isActive: true,
+        sortOrder: commonSettingsValue[type].length + 1,
+        ...(type === "materials" ? { unit: "" } : {}),
+        ...(type === "equipment" ? { unit: "台次", specification: "" } : {}),
+      },
+      commonSettingsValue[type].length,
+      type,
+    );
+    await persistCommonSettings({
+      ...commonSettingsValue,
+      [type]: [...commonSettingsValue[type], item],
+    });
+    return item;
+  }
+
   const projectNotifications = useMemo(
     () =>
       buildProjectNotifications({
@@ -9706,6 +10231,7 @@ export default function App() {
           todoItems={projectTodoItems}
           contractItems={projectContracts}
           dailyReports={projectDailyReports}
+          commonSettings={commonSettingsValue}
         />
       );
     }
@@ -9756,7 +10282,27 @@ export default function App() {
       );
     }
     if (active === "meetings") return <Meetings p={p} items={projectMeetingItems} />;
-    if (active === "daily") return <Daily p={p} records={dailyRecords} />;
+    if (active === "daily") {
+      return (
+        <Daily
+          p={p}
+          records={dailyRecords}
+          commonSettings={commonSettingsValue}
+          onQuickAddSetting={quickAddCommonSetting}
+        />
+      );
+    }
+    if (active === "commonSettings") {
+      return (
+        <CommonSettings
+          p={p}
+          settings={commonSettingsValue}
+          onSave={persistCommonSettings}
+          loading={commonSettingsRecords.loading}
+          error={commonSettingsRecords.error}
+        />
+      );
+    }
     if (active === "defects") return <Defects p={p} recordsApi={defectRecords} />;
     if (active === "todos") {
       return (
@@ -9791,6 +10337,10 @@ export default function App() {
     dailyRecords.items,
     dailyRecords.loading,
     dailyRecords.error,
+    commonSettingsRecords.items,
+    commonSettingsRecords.loading,
+    commonSettingsRecords.error,
+    commonSettingsValue,
   ]);
 
   if (auth.loading) {

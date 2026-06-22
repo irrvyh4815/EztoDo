@@ -102,6 +102,7 @@
 | 預定進度 | `schedule` |
 | 會議紀錄 | `meetings` |
 | 施工日報 | `daily` |
+| 常用設定 | `commonSettings` |
 | 缺失改善 | `defects` |
 | 材料庫存 | `materials` |
 | 待辦事項 | `todos` |
@@ -207,9 +208,38 @@
     "date": "2026-05-24",
     "weather": "晴",
     "weatherNote": "",
-    "work": [],
-    "materials": [],
-    "equipment": [],
+    "work": [
+      {
+        "commonSettingId": "crew-masonry",
+        "trade": "泥作工班",
+        "statisticsCategory": "泥作工班",
+        "workers": 6,
+        "description": "3F 砌磚",
+        "note": ""
+      }
+    ],
+    "materials": [
+      {
+        "commonSettingId": "material-cement",
+        "name": "水泥",
+        "statisticsCategory": "水泥",
+        "spec": "卜特蘭一型",
+        "quantity": 40,
+        "unit": "包",
+        "note": ""
+      }
+    ],
+    "equipment": [
+      {
+        "commonSettingId": "equipment-excavator",
+        "name": "挖土機",
+        "statisticsCategory": "挖土機",
+        "specification": "120 型",
+        "quantity": 1,
+        "unit": "台班",
+        "note": ""
+      }
+    ],
     "aiSource": {
       "name": "daily-report.jpg",
       "url": "https://blob-store.example/projects/project-id/daily-source/file.jpg"
@@ -226,6 +256,54 @@
 ```
 
 紙本日報 AI 判讀建議先呼叫 `POST /api/ai/daily-report` 取得結構化結果，再讓使用者確認欄位內容，最後才用 `project_records` 寫入正式施工日報。目前紙本日報圖片限制 3MB 以下，現場施工照每份日報最多 10 張；圖片本體保存於 Vercel Blob，Postgres 只保存檔案 metadata 與 URL。
+
+### 常用設定
+
+每個工地保存一筆 `commonSettings` 紀錄。`aliases` 預留給人工輸入與未來 AI 匯入的同義詞映射；施工日報保存 `commonSettingId` 與 `statisticsCategory`，Dashboard 可優先依穩定 ID 或統計分類歸類。
+
+```json
+{
+  "module": "commonSettings",
+  "title": "常用設定",
+  "status": "啟用中",
+  "payload": {
+    "crews": [
+      {
+        "id": "crew-masonry",
+        "name": "泥作工班",
+        "sortOrder": 10,
+        "isActive": true,
+        "statisticsCategory": "泥作工班",
+        "aliases": ["泥作", "泥作工", "泥作班"]
+      }
+    ],
+    "materials": [
+      {
+        "id": "material-cement",
+        "name": "水泥",
+        "unit": "包",
+        "sortOrder": 10,
+        "isActive": true,
+        "statisticsCategory": "水泥",
+        "aliases": ["卜特蘭水泥"]
+      }
+    ],
+    "equipment": [
+      {
+        "id": "equipment-excavator",
+        "name": "挖土機",
+        "unit": "台班",
+        "specification": "120 型",
+        "sortOrder": 10,
+        "isActive": true,
+        "statisticsCategory": "挖土機",
+        "aliases": ["怪手", "120怪手"]
+      }
+    ]
+  },
+  "attachments": []
+}
+```
 
 ### 會議紀錄
 
