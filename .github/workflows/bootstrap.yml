@@ -1,0 +1,32 @@
+name: Bootstrap EztoDo source
+
+on:
+  push:
+    paths:
+      - .github/workflows/bootstrap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified source archive
+        run: |
+          curl --fail --location --silent --show-error \
+            https://s7lxkqboomldlslz.public.blob.vercel-storage.com/eztodo-source.zip \
+            --output /tmp/eztodo-source.zip
+          echo "d9d801dee34ae864240ff5a808889669f8ccfffcd50085bf050c9b085edeaa73  /tmp/eztodo-source.zip" | sha256sum --check
+      - name: Import source
+        run: |
+          mkdir -p /tmp/eztodo-source
+          unzip -q /tmp/eztodo-source.zip -d /tmp/eztodo-source
+          rsync -a /tmp/eztodo-source/ ./
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Publish EztoDo production source"
+          git push origin HEAD:main
