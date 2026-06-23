@@ -130,7 +130,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26062302";
+const APP_VERSION = "eztodo_26062303";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -8008,23 +8008,24 @@ function NotificationCenter({ notifications, open, onOpenChange, onNavigate }) {
   const preview = notifications.slice(0, 8);
 
   return (
-    <div className="relative">
+    <div className="fixed right-4 top-16 z-40">
       <Button
         type="button"
         variant="outline"
-        size="icon"
         onClick={() => onOpenChange(!open)}
-        className="relative bg-white"
+        className="relative min-h-10 rounded-full bg-white px-4 shadow-lg hover:bg-slate-50"
         aria-label="站內通知"
+        aria-expanded={open}
       >
         <Bell className="h-4 w-4" />
+        <span>通知</span>
         {hasNotifications ? (
-          <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
+          <span className="absolute right-1 top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
         ) : null}
       </Button>
 
       {open ? (
-        <div className="absolute right-0 z-30 mt-2 w-[min(92vw,380px)] overflow-hidden rounded-2xl border bg-white shadow-xl">
+        <div className="absolute right-0 mt-2 w-[min(calc(100vw-2rem),380px)] overflow-hidden rounded-2xl border bg-white shadow-2xl">
           <div className="border-b bg-slate-50 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -10177,6 +10178,16 @@ export default function App() {
     if (adminOpen) setAdminOpen(false);
   }
 
+  function handleAdminOpenChange(nextOpen) {
+    setAdminOpen(nextOpen);
+    if (nextOpen) setNotificationsOpen(false);
+  }
+
+  function handleNotificationsOpenChange(nextOpen) {
+    setNotificationsOpen(nextOpen);
+    if (nextOpen) setAdminOpen(false);
+  }
+
   function finishLoginTransition() {
     if (!loginTransitionUser) return;
     setAuth({ loading: false, user: loginTransitionUser });
@@ -10440,7 +10451,7 @@ export default function App() {
           onLogout={handleLogout}
           onUserUpdate={(user) => setAuth((current) => ({ ...current, user }))}
           open={adminOpen}
-          onOpenChange={setAdminOpen}
+          onOpenChange={handleAdminOpenChange}
         />
         <div onPointerDownCapture={closeAdminPanel}>
           <ProjectSelect
@@ -10466,7 +10477,18 @@ export default function App() {
         onLogout={handleLogout}
         onUserUpdate={(user) => setAuth((current) => ({ ...current, user }))}
         open={adminOpen}
-        onOpenChange={setAdminOpen}
+        onOpenChange={handleAdminOpenChange}
+      />
+      <NotificationCenter
+        notifications={projectNotifications}
+        open={notificationsOpen}
+        onOpenChange={handleNotificationsOpenChange}
+        onNavigate={(moduleId) => {
+          if (canUseProjectModule(p, moduleId)) {
+            setActive(moduleId);
+            setModuleListOpen(false);
+          }
+        }}
       />
       <div onPointerDownCapture={closeAdminPanel} className="min-h-screen bg-slate-50 text-slate-900">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 lg:flex-row">
@@ -10593,19 +10615,6 @@ export default function App() {
           </Card>
         </aside>
         <main className="min-w-0 flex-1">
-          <div className="mb-4 flex justify-end">
-            <NotificationCenter
-              notifications={projectNotifications}
-              open={notificationsOpen}
-              onOpenChange={setNotificationsOpen}
-              onNavigate={(moduleId) => {
-                if (canUseProjectModule(p, moduleId)) {
-                  setActive(moduleId);
-                  setModuleListOpen(false);
-                }
-              }}
-            />
-          </div>
           <motion.div
             key={`${p.name}-${active}`}
             initial={{ opacity: 0, y: 8 }}
