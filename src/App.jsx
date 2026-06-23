@@ -130,7 +130,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26062301";
+const APP_VERSION = "eztodo_26062302";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -2973,6 +2973,10 @@ function CommonSettingSelect({
   const [isComposing, setIsComposing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const quickInputId = useMemo(
+    () => `quick-common-setting-${Math.random().toString(36).slice(2)}`,
+    [],
+  );
   const activeItems = items.filter((item) => item.isActive);
   const hasCurrentValue = value && !activeItems.some((item) => item.name === value);
 
@@ -2999,7 +3003,7 @@ function CommonSettingSelect({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <select
         value={value || ""}
         onChange={(event) => {
@@ -3022,17 +3026,23 @@ function CommonSettingSelect({
         <option value={quickAddOptionValue}>＋ 新增至常用設定</option>
       </select>
       {quickOpen ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-3">
-          <p className="mb-2 text-xs font-medium text-slate-600">{quickAddLabel}</p>
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+        <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50/60 p-3">
+          <label
+            className="mb-2 block text-sm font-semibold text-slate-700"
+            htmlFor={quickInputId}
+          >
+            {quickAddLabel}
+          </label>
+          <div className="space-y-2">
             <input
+              id={quickInputId}
               type="text"
               value={quickName}
               autoFocus
               inputMode="text"
-              placeholder="輸入名稱"
+              placeholder="請輸入名稱"
               aria-label={quickAddLabel}
-              className="w-full rounded-xl border bg-white px-3 py-2 outline-none"
+              className="block min-h-12 w-full min-w-0 rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-base font-medium text-slate-900 caret-blue-600 shadow-sm outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               onInput={(event) => setQuickName(event.currentTarget.value)}
               onChange={(event) => setQuickName(event.currentTarget.value)}
               onCompositionStart={() => setIsComposing(true)}
@@ -3047,22 +3057,25 @@ function CommonSettingSelect({
                 }
               }}
             />
-            <Button type="button" size="sm" onClick={submitQuickAdd} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              新增並套用
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setQuickOpen(false);
-                setQuickName("");
-                setError("");
-              }}
-            >
-              取消
-            </Button>
+            <p className="text-xs text-slate-500">輸入後按 Enter，或點擊下方按鈕新增。</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" size="sm" onClick={submitQuickAdd} disabled={busy}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                新增並套用
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setQuickOpen(false);
+                  setQuickName("");
+                  setError("");
+                }}
+              >
+                取消
+              </Button>
+            </div>
           </div>
           {error ? <p className="mt-2 text-xs text-red-600">{error}</p> : null}
         </div>
