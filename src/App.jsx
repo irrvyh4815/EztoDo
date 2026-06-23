@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   activeCommonSettingItems,
+  countCommonSettingUsage,
   defaultCommonSettings,
   normalizeCommonSettingItem,
   normalizeCommonSettings,
+  removeCommonSettingItem,
   summarizeDailyReportResources,
 } from "./commonSettings.js";
 import {
@@ -128,7 +130,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26062201";
+const APP_VERSION = "eztodo_26062301";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -2968,12 +2970,14 @@ function CommonSettingSelect({
 }) {
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickName, setQuickName] = useState("");
+  const [isComposing, setIsComposing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const activeItems = items.filter((item) => item.isActive);
   const hasCurrentValue = value && !activeItems.some((item) => item.name === value);
 
   async function submitQuickAdd() {
+    if (busy) return;
     const name = quickName.trim();
     if (!name) {
       setError("請輸入名稱");
@@ -3021,7 +3025,28 @@ function CommonSettingSelect({
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <p className="mb-2 text-xs font-medium text-slate-600">{quickAddLabel}</p>
           <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-            <Input value={quickName} onChange={setQuickName} ph="輸入名稱" />
+            <input
+              type="text"
+              value={quickName}
+              autoFocus
+              inputMode="text"
+              placeholder="輸入名稱"
+              aria-label={quickAddLabel}
+              className="w-full rounded-xl border bg-white px-3 py-2 outline-none"
+              onInput={(event) => setQuickName(event.currentTarget.value)}
+              onChange={(event) => setQuickName(event.currentTarget.value)}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={(event) => {
+                setIsComposing(false);
+                setQuickName(event.currentTarget.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !isComposing && !busy) {
+                  event.preventDefault();
+                  submitQuickAdd();
+                }
+              }}
+            />
             <Button type="button" size="sm" onClick={submitQuickAdd} disabled={busy}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               新增並套用
@@ -5934,7 +5959,7 @@ function commonSettingDraft(type, item = {}) {
   };
 }
 
-function CommonSettings({ p, settings, onSave, loading, error }) {
+function CommonSettings({ p, settings, onSave, dailyReports = [], loading, error }) {
   const [activeType, setActiveType] = useState("crews");
   const [draft, setDraft] = useState(() => commonSettingDraft("crews"));
   const [busy, setBusy] = useState(false);
@@ -6009,6 +6034,28 @@ function CommonSettings({ p, settings, onSave, loading, error }) {
         candidate.id === item.id ? { ...candidate, isActive: !candidate.isActive } : candidate,
       ),
     );
+  }
+
+  async function permanentlyDeleteItem(item) {
+    const usageCount = countCommonSettingUsage(dailyReports, activeType, item);
+    const usageMessage = usageCount
+      ? `目前偵測到 ${usageCount} 筆施工日報紀錄使用此選項。`
+      : "目前未偵測到施工日報使用此選項。";
+    const confirmed = window.confirm(
+      `確定永久刪除「${item.name}」？\n\n${usageMessage}\n永久刪除無法復原，可能導致已使用此選項的表單部分數據遺失或無法正確統計。若只是不想繼續使用，建議改用「停用」。`,
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    setFormError("");
+    try {
+      await onSave(removeCommonSettingItem(settings, activeType, item.id));
+      if (draft.id === item.id) resetDraft();
+    } catch (deleteError) {
+      setFormError(deleteError.message || "永久刪除失敗");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function moveItem(index, direction) {
@@ -6179,6 +6226,16 @@ function CommonSettings({ p, settings, onSave, loading, error }) {
                     onClick={() => toggleItem(item)}
                   >
                     {item.isActive ? "停用" : "重新啟用"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => permanentlyDeleteItem(item)}
+                  >
+                    <Trash2 className="mr-1 h-4 w-4" />
+                    永久刪除
                   </Button>
                 </div>
               </div>
@@ -10298,6 +10355,7 @@ export default function App() {
           p={p}
           settings={commonSettingsValue}
           onSave={persistCommonSettings}
+          dailyReports={projectDailyReports}
           loading={commonSettingsRecords.loading}
           error={commonSettingsRecords.error}
         />

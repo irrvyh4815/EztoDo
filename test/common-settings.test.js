@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   canonicalCommonSettingName,
+  countCommonSettingUsage,
   normalizeCommonSettings,
+  removeCommonSettingItem,
   summarizeDailyReportResources,
 } from "../src/commonSettings.js";
 
@@ -61,4 +63,39 @@ test("daily summaries merge aliases and retain source report counts", () => {
   assert.equal(summary.equipmentTotals[0].name, "挖土機");
   assert.equal(summary.equipmentTotals[0].quantity, 3);
   assert.equal(summary.equipmentTotals[0].sourceReports, 2);
+});
+
+test("permanent deletion removes only the selected common setting and resequences order", () => {
+  const settings = normalizeCommonSettings({
+    crews: [
+      { id: "crew-a", name: "甲工班", sortOrder: 3, isActive: true },
+      { id: "crew-b", name: "乙工班", sortOrder: 8, isActive: true },
+    ],
+  });
+  const next = removeCommonSettingItem(settings, "crews", "crew-a");
+
+  assert.deepEqual(
+    next.crews.map((item) => ({ id: item.id, sortOrder: item.sortOrder })),
+    [{ id: "crew-b", sortOrder: 1 }],
+  );
+  assert.equal(next.materials.length, settings.materials.length);
+});
+
+test("common setting usage counts ids, names, and aliases", () => {
+  const setting = {
+    id: "crew-masonry",
+    name: "泥作工班",
+    statisticsCategory: "泥作工班",
+    aliases: ["泥作班"],
+  };
+  const reports = [
+    {
+      work: [
+        { commonSettingId: "crew-masonry", trade: "舊名稱" },
+        { trade: "泥作班" },
+      ],
+    },
+  ];
+
+  assert.equal(countCommonSettingUsage(reports, "crews", setting), 2);
 });

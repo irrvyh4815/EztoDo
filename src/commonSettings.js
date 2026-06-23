@@ -136,6 +136,17 @@ export function activeCommonSettingItems(settings, type) {
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "zh-Hant"));
 }
 
+export function removeCommonSettingItem(settings, type, itemId) {
+  const normalized = normalizeCommonSettings(settings);
+  if (!Array.isArray(normalized[type])) return normalized;
+  return {
+    ...normalized,
+    [type]: normalized[type]
+      .filter((item) => item.id !== itemId)
+      .map((item, index) => ({ ...item, sortOrder: index + 1 })),
+  };
+}
+
 function compactName(value) {
   return String(value || "")
     .trim()
@@ -243,4 +254,32 @@ export function summarizeDailyReportResources(reports = [], settings = {}) {
     materialTotals: sorted(materialMap, "quantity"),
     equipmentTotals: sorted(equipmentMap, "quantity"),
   };
+}
+
+export function countCommonSettingUsage(reports = [], type, setting = {}) {
+  const rowsKey = {
+    crews: "work",
+    materials: "materials",
+    equipment: "equipment",
+  }[type];
+  const nameKey = type === "crews" ? "trade" : "name";
+  if (!rowsKey) return 0;
+
+  const names = new Set(
+    [setting.name, setting.statisticsCategory, ...(setting.aliases || [])]
+      .map(compactName)
+      .filter(Boolean),
+  );
+
+  return reports.reduce(
+    (total, report) =>
+      total +
+      (report[rowsKey] || []).filter(
+        (row) =>
+          (setting.id && row.commonSettingId === setting.id) ||
+          names.has(compactName(row[nameKey])) ||
+          names.has(compactName(row.statisticsCategory)),
+      ).length,
+    0,
+  );
 }
