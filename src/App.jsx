@@ -10,6 +10,11 @@ import {
   summarizeDailyReportResources,
 } from "./commonSettings.js";
 import {
+  isTimedNotificationPast,
+  notificationDateTimeLabel,
+  shouldShowTimedNotification,
+} from "./notificationRules.js";
+import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
@@ -130,7 +135,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26062303";
+const APP_VERSION = "eztodo_26062501";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -566,6 +571,10 @@ function todayKey() {
   return toDateKey(new Date());
 }
 
+function currentTimeKey(date = new Date()) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 function compareDateKey(value, fallback = "") {
   return String(value || fallback || "").slice(0, 10);
 }
@@ -890,7 +899,10 @@ function isOverdue(value) {
   return Boolean(date && today && date < today);
 }
 
-function buildProjectNotifications({ announcements = [], defects = [], meetings = [], todos = [], memos = [] }) {
+function buildProjectNotifications(
+  { announcements = [], defects = [], meetings = [], todos = [], memos = [] },
+  now = new Date(),
+) {
   const notices = [];
 
   announcements
@@ -937,28 +949,38 @@ function buildProjectNotifications({ announcements = [], defects = [], meetings 
     });
 
   todos
-    .filter((item) => !isClosedStatus(item.status) && (isOverdue(item.date) || dateWithinDays(item.date, 7)))
+    .filter(
+      (item) =>
+        !isClosedStatus(item.status) &&
+        shouldShowTimedNotification(item, now, 7),
+    )
     .forEach((item) => {
+      const past = isTimedNotificationPast(item, now);
       notices.push({
         id: `todo-${item.id}`,
         type: "待辦",
-        tone: isOverdue(item.date) ? "danger" : "info",
+        tone: past ? "danger" : "info",
         title: item.title || item.name || "近期待辦事項",
-        desc: `${item.owner || "未指定"}｜${item.date || "未設定日期"}｜${item.note || "無備註"}`,
+        desc: `${item.owner || "未指定"}｜${notificationDateTimeLabel(item)}｜${item.note || "無備註"}`,
         date: item.date,
         module: "todos",
       });
     });
 
   memos
-    .filter((item) => !isClosedStatus(item.status) && dateWithinDays(item.date, 7))
+    .filter(
+      (item) =>
+        !isClosedStatus(item.status) &&
+        shouldShowTimedNotification(item, now, 7),
+    )
     .forEach((item) => {
+      const past = isTimedNotificationPast(item, now);
       notices.push({
         id: `memo-${item.id}`,
         type: "Memo",
-        tone: "info",
+        tone: past ? "warning" : "info",
         title: item.title || "近期工項 Memo",
-        desc: `${item.trade || "未分類"}｜${item.date || "未設定日期"}｜${item.status || "未設定狀態"}`,
+        desc: `${item.trade || "未分類"}｜${notificationDateTimeLabel(item)}｜${item.status || "未設定狀態"}`,
         date: item.date,
         module: "memos",
       });
@@ -2721,10 +2743,11 @@ function buildContractPrintRecord(record) {
 function buildMemoPrintRecord(record) {
   return {
     title: record.title,
-    subtitle: `${record.trade || "未分類工項"}｜${record.date || "未設定"}`,
+    subtitle: `${record.trade || "未分類工項"}｜${notificationDateTimeLabel(record)}`,
     status: record.status,
     fields: [
       ["日期", record.date],
+      ["時間", record.time],
       ["工項", record.trade],
       ["標題", record.title],
       ["狀態", record.status],
@@ -2787,12 +2810,13 @@ function buildDefectPrintRecord(record) {
 function buildTodoPrintRecord(record) {
   return {
     title: record.title,
-    subtitle: `負責人：${record.owner || "未指定"}｜日期：${record.date || "未設定"}`,
+    subtitle: `負責人：${record.owner || "未指定"}｜時間：${notificationDateTimeLabel(record)}`,
     status: record.status,
     fields: [
       ["待辦事項", record.title],
       ["負責人", record.owner],
       ["日期", record.date],
+      ["時間", record.time],
       ["優先度", record.status],
     ],
     note: record.note,
@@ -2851,7 +2875,7 @@ function withRowIds(rows, emptyRow) {
 
 function Header({ title, sub, btn = "新增資料", onAdd }) {
   return (
-    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:pr-32">
       <div className="min-w-0">
         <h1 className="text-2xl font-bold">{title}</h1>
         <p className="mt-1 break-words text-sm text-slate-500">{sub}</p>
@@ -5467,6 +5491,7 @@ function Memos({ p, items, onSave, onUpdate, onDelete }) {
     trade: "",
     title: "",
     date: todayKey(),
+    time: currentTimeKey(),
     note: "",
     status: "待處理",
     attachments: [],
@@ -5475,7 +5500,7 @@ function Memos({ p, items, onSave, onUpdate, onDelete }) {
   const [editingId, setEditingId] = useState("");
 
   function resetDraft() {
-    setDraft({ ...emptyDraft, date: todayKey() });
+    setDraft({ ...emptyDraft, date: todayKey(), time: currentTimeKey() });
     setEditingId("");
   }
 
@@ -5484,6 +5509,7 @@ function Memos({ p, items, onSave, onUpdate, onDelete }) {
       ...emptyDraft,
       ...memo,
       date: memo.date || todayKey(),
+      time: memo.time || "",
       attachments: memo.attachments || [],
     });
     setEditingId(memo.id);
@@ -5498,6 +5524,7 @@ function Memos({ p, items, onSave, onUpdate, onDelete }) {
       trade: draft.trade || "未分類工項",
       title: draft.title || "未命名 Memo",
       date: draft.date || todayKey(),
+      time: draft.time || "",
       note: draft.note || "未填寫內容",
       status: draft.status,
       attachments: draft.attachments || [],
@@ -5538,7 +5565,7 @@ function Memos({ p, items, onSave, onUpdate, onDelete }) {
                 <Badge>{x.status}</Badge>
               </div>
               <h3 className="mt-3 text-lg font-bold">{x.title}</h3>
-              <p className="text-sm text-slate-500">日期：{x.date || "未設定"}</p>
+              <p className="text-sm text-slate-500">提醒：{notificationDateTimeLabel(x)}</p>
               <p className="text-sm text-slate-500">{x.note}</p>
               <AttachmentSummary attachments={x.attachments} />
             </div>
@@ -5589,6 +5616,16 @@ function Memos({ p, items, onSave, onUpdate, onDelete }) {
                   type="date"
                   value={draft.date}
                   onChange={(value) => setDraft({ ...draft, date: value })}
+                />
+              </div>
+            </label>
+            <label>
+              <span className="text-sm font-medium">時間</span>
+              <div className="mt-2">
+                <Input
+                  type="time"
+                  value={draft.time}
+                  onChange={(value) => setDraft({ ...draft, time: value })}
                 />
               </div>
             </label>
@@ -8013,28 +8050,36 @@ function NotificationCenter({ notifications, open, onOpenChange, onNavigate }) {
         type="button"
         variant="outline"
         onClick={() => onOpenChange(!open)}
-        className="relative min-h-10 rounded-full bg-white px-4 shadow-lg hover:bg-slate-50"
+        className="group relative h-12 w-12 rounded-2xl !border-slate-700 !bg-slate-950 p-0 !text-white shadow-xl shadow-slate-900/20 transition hover:-translate-y-0.5 hover:!bg-slate-800 hover:!text-white"
         aria-label="站內通知"
         aria-expanded={open}
       >
-        <Bell className="h-4 w-4" />
-        <span>通知</span>
+        <Bell className="h-5 w-5 transition group-hover:rotate-6" />
         {hasNotifications ? (
-          <span className="absolute right-1 top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
+          <span className="absolute -right-1.5 -top-1.5 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white">
+            {notifications.length > 99 ? "99+" : notifications.length}
+          </span>
         ) : null}
+        <span className="pointer-events-none absolute right-14 top-1/2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg group-hover:block">
+          通知中心
+        </span>
       </Button>
 
       {open ? (
         <div className="absolute right-0 mt-2 w-[min(calc(100vw-2rem),380px)] overflow-hidden rounded-2xl border bg-white shadow-2xl">
-          <div className="border-b bg-slate-50 px-4 py-3">
+          <div className="border-b bg-gradient-to-r from-slate-950 to-slate-800 px-4 py-3 text-white">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="font-bold">站內通知</h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  公告、缺失期限、會議與待辦會在這裡彙整。
+                <h3 className="font-bold">通知中心</h3>
+                <p className="mt-1 text-xs text-slate-300">
+                  Memo 與待辦會在設定時間 2 小時後自動移除。
                 </p>
               </div>
-              {hasNotifications ? <Badge>{notifications.length}</Badge> : null}
+              {hasNotifications ? (
+                <span className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-bold text-white">
+                  {notifications.length}
+                </span>
+              ) : null}
             </div>
           </div>
           <div className="max-h-[60vh] overflow-auto p-3">
@@ -8164,6 +8209,7 @@ function Todos({ p, items, onSave, onUpdate, onDelete }) {
     title: "",
     owner: "",
     date: todayKey(),
+    time: currentTimeKey(),
     status: "一般",
     note: "",
     attachments: [],
@@ -8172,7 +8218,7 @@ function Todos({ p, items, onSave, onUpdate, onDelete }) {
   const [editingId, setEditingId] = useState("");
 
   function resetDraft() {
-    setDraft({ ...emptyDraft, date: todayKey() });
+    setDraft({ ...emptyDraft, date: todayKey(), time: currentTimeKey() });
     setEditingId("");
   }
 
@@ -8181,6 +8227,7 @@ function Todos({ p, items, onSave, onUpdate, onDelete }) {
       ...emptyDraft,
       ...todo,
       date: todo.date || todayKey(),
+      time: todo.time || "",
       attachments: todo.attachments || [],
     });
     setEditingId(todo.id);
@@ -8195,6 +8242,7 @@ function Todos({ p, items, onSave, onUpdate, onDelete }) {
       title: draft.title || "未命名待辦",
       owner: draft.owner || "未指定",
       date: draft.date || todayKey(),
+      time: draft.time || "",
       status: draft.status || "一般",
       note: draft.note,
       attachments: draft.attachments || [],
@@ -8236,7 +8284,7 @@ function Todos({ p, items, onSave, onUpdate, onDelete }) {
                 <Badge>{todo.status}</Badge>
               </div>
               <p className="mt-2 text-sm text-slate-500">
-                負責人：{todo.owner}｜日期：{todo.date}
+                負責人：{todo.owner}｜提醒：{notificationDateTimeLabel(todo)}
               </p>
               {todo.note ? <p className="text-sm text-slate-500">{todo.note}</p> : null}
               <AttachmentSummary attachments={todo.attachments} />
@@ -8290,6 +8338,16 @@ function Todos({ p, items, onSave, onUpdate, onDelete }) {
                   type="date"
                   value={draft.date}
                   onChange={(value) => setDraft({ ...draft, date: value })}
+                />
+              </div>
+            </label>
+            <label>
+              <span className="text-sm font-medium">時間</span>
+              <div className="mt-2">
+                <Input
+                  type="time"
+                  value={draft.time}
+                  onChange={(value) => setDraft({ ...draft, time: value })}
                 />
               </div>
             </label>
@@ -10116,6 +10174,7 @@ export default function App() {
   const [moduleListOpen, setModuleListOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationClock, setNotificationClock] = useState(() => Date.now());
   const [loginTransitionUser, setLoginTransitionUser] = useState(null);
   const announcementRecords = useProjectRecords(p, "announcements", []);
   const claimRecords = useProjectRecords(p, "claims", claimSeed);
@@ -10132,6 +10191,11 @@ export default function App() {
     () => normalizeCommonSettings(commonSettingsRecords.items[0] || defaultCommonSettings),
     [commonSettingsRecords.items],
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNotificationClock(Date.now()), 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (useLocalPreview) return;
@@ -10259,19 +10323,23 @@ export default function App() {
 
   const projectNotifications = useMemo(
     () =>
-      buildProjectNotifications({
-        announcements: announcementRecords.items,
-        defects: defectRecords.items,
-        meetings: meetingRecords.items,
-        todos: todoRecords.items,
-        memos: memoRecords.items,
-      }),
+      buildProjectNotifications(
+        {
+          announcements: announcementRecords.items,
+          defects: defectRecords.items,
+          meetings: meetingRecords.items,
+          todos: todoRecords.items,
+          memos: memoRecords.items,
+        },
+        new Date(notificationClock),
+      ),
     [
       announcementRecords.items,
       defectRecords.items,
       meetingRecords.items,
       todoRecords.items,
       memoRecords.items,
+      notificationClock,
     ],
   );
 
@@ -10614,7 +10682,7 @@ export default function App() {
             </CardContent>
           </Card>
         </aside>
-        <main className="min-w-0 flex-1">
+        <main className="min-w-0 flex-1 pt-28 lg:pt-0">
           <motion.div
             key={`${p.name}-${active}`}
             initial={{ opacity: 0, y: 8 }}
