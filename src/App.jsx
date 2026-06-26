@@ -135,7 +135,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26062501";
+const APP_VERSION = "eztodo_26062502";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -628,6 +628,31 @@ function moveMonth(monthKey, amount) {
   return monthKeyFromDate(date);
 }
 
+function dateKeyOffset(value, amount) {
+  const date = parseDate(value) || new Date();
+  date.setDate(date.getDate() + amount);
+  return toDateKey(date);
+}
+
+function weekStartKey(value = todayKey()) {
+  const date = parseDate(value) || new Date();
+  date.setDate(date.getDate() - date.getDay());
+  return toDateKey(date);
+}
+
+function weekDaysFrom(value = todayKey()) {
+  const start = parseDate(weekStartKey(value)) || new Date();
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = addDays(start, index);
+    const key = toDateKey(date);
+    return {
+      date: key,
+      day: date.getDate(),
+      isToday: key === todayKey(),
+    };
+  });
+}
+
 function matchesProject(item, project) {
   if (!item || !project) return false;
   if (item.projectId) return item.projectId === project.id;
@@ -899,6 +924,13 @@ function isOverdue(value) {
   return Boolean(date && today && date < today);
 }
 
+function notificationProjectMeta(item = {}) {
+  return {
+    projectId: item.projectId || "",
+    projectName: item.projectName || "未命名工地",
+  };
+}
+
 function buildProjectNotifications(
   { announcements = [], defects = [], meetings = [], todos = [], memos = [] },
   now = new Date(),
@@ -910,13 +942,14 @@ function buildProjectNotifications(
     .slice(0, 5)
     .forEach((item) => {
       notices.push({
-        id: `announcement-${item.id}`,
+        id: `announcement-${item.projectId || item.projectName}-${item.id}`,
         type: "公告",
         tone: item.status === "緊急" ? "danger" : "warning",
         title: item.name || item.title || "重要公告",
         desc: item.note || "請查看公告內容。",
         date: item.createdAt || item.date || "",
         module: "projects",
+        ...notificationProjectMeta(item),
       });
     });
 
@@ -924,13 +957,14 @@ function buildProjectNotifications(
     .filter((item) => !isClosedStatus(item.status) && (isOverdue(item.due) || dateWithinDays(item.due, 7)))
     .forEach((item) => {
       notices.push({
-        id: `defect-${item.id}`,
+        id: `defect-${item.projectId || item.projectName}-${item.id}`,
         type: "缺失",
         tone: isOverdue(item.due) ? "danger" : "warning",
         title: `${item.location || "未填位置"} ${isOverdue(item.due) ? "已逾期" : "即將到期"}`,
         desc: `${item.type || "缺失"}｜負責：${item.vendor || "未指定"}｜期限：${item.due || "未設定"}`,
         date: item.due,
         module: "defects",
+        ...notificationProjectMeta(item),
       });
     });
 
@@ -938,13 +972,14 @@ function buildProjectNotifications(
     .filter((item) => dateWithinDays(item.date, 7))
     .forEach((item) => {
       notices.push({
-        id: `meeting-${item.id}`,
+        id: `meeting-${item.projectId || item.projectName}-${item.id}`,
         type: "會議",
         tone: "info",
         title: item.title || item.meetingType || "近期會議",
         desc: `${item.date || "未設定日期"}｜${item.location || "未填地點"}｜記錄：${item.recorder || "未填寫"}`,
         date: item.date,
         module: "meetings",
+        ...notificationProjectMeta(item),
       });
     });
 
@@ -957,13 +992,14 @@ function buildProjectNotifications(
     .forEach((item) => {
       const past = isTimedNotificationPast(item, now);
       notices.push({
-        id: `todo-${item.id}`,
+        id: `todo-${item.projectId || item.projectName}-${item.id}`,
         type: "待辦",
         tone: past ? "danger" : "info",
         title: item.title || item.name || "近期待辦事項",
         desc: `${item.owner || "未指定"}｜${notificationDateTimeLabel(item)}｜${item.note || "無備註"}`,
         date: item.date,
         module: "todos",
+        ...notificationProjectMeta(item),
       });
     });
 
@@ -976,13 +1012,14 @@ function buildProjectNotifications(
     .forEach((item) => {
       const past = isTimedNotificationPast(item, now);
       notices.push({
-        id: `memo-${item.id}`,
+        id: `memo-${item.projectId || item.projectName}-${item.id}`,
         type: "Memo",
         tone: past ? "warning" : "info",
         title: item.title || "近期工項 Memo",
         desc: `${item.trade || "未分類"}｜${notificationDateTimeLabel(item)}｜${item.status || "未設定狀態"}`,
         date: item.date,
         module: "memos",
+        ...notificationProjectMeta(item),
       });
     });
 
@@ -992,6 +1029,70 @@ function buildProjectNotifications(
     if (toneCompare !== 0) return toneCompare;
     return compareDateKey(a.date, "9999-12-31").localeCompare(compareDateKey(b.date, "9999-12-31"));
   });
+}
+
+const notificationRecordModules = ["announcements", "defects", "meetings", "todos", "memos"];
+
+function notificationSeedItems(module) {
+  return {
+    announcements: [],
+    defects: defectSeed,
+    meetings: [],
+    todos: todoSeed,
+    memos,
+  }[module] || [];
+}
+
+function decorateNotificationRecords(records, project) {
+  return (records || []).map((item) => ({
+    ...item,
+    projectId: project.id,
+    projectName: project.name,
+  }));
+}
+
+async function loadNotificationWorkspace(currentProject) {
+  if (useLocalPreview) {
+    const projectList = [...previewProjects];
+    if (
+      currentProject?.id &&
+      !projectList.some((project) => project.id === currentProject.id)
+    ) {
+      projectList.push(currentProject);
+    }
+    const records = Object.fromEntries(notificationRecordModules.map((module) => [module, []]));
+
+    projectList.forEach((project) => {
+      notificationRecordModules.forEach((module) => {
+        let items = seedItemsForProject(notificationSeedItems(module), project);
+        try {
+          const saved = window.localStorage.getItem(localRecordsKey(project, module));
+          if (saved) items = JSON.parse(saved);
+        } catch {
+          // Keep the project seed when preview storage is unavailable or malformed.
+        }
+        records[module].push(...decorateNotificationRecords(items, project));
+      });
+    });
+    return { projects: projectList, records };
+  }
+
+  const projectData = await apiFetch("/api/projects");
+  const projectList = projectData.projects || [];
+  const records = Object.fromEntries(notificationRecordModules.map((module) => [module, []]));
+  await Promise.all(
+    projectList.flatMap((project) =>
+      notificationRecordModules.map(async (module) => {
+        const data = await apiFetch(
+          `/api/projects/${encodeURIComponent(project.id)}/records?module=${encodeURIComponent(module)}`,
+        );
+        records[module].push(
+          ...decorateNotificationRecords((data.records || []).map(itemFromRecord), project),
+        );
+      }),
+    ),
+  );
+  return { projects: projectList, records };
 }
 
 function projectModuleRestriction(project, module) {
@@ -3821,9 +3922,12 @@ function Shell({ children, full = false }) {
 }
 
 function DashboardCalendar({ project, todos, memos: memoItems, className = "" }) {
+  const [viewMode, setViewMode] = useState("month");
   const [monthKey, setMonthKey] = useState(todayKey().slice(0, 7));
-  const days = useMemo(() => monthCalendarDays(monthKey), [monthKey]);
-  const weekDays = ["日", "一", "二", "三", "四", "五", "六"];
+  const [weekKey, setWeekKey] = useState(() => weekStartKey(todayKey()));
+  const monthDays = useMemo(() => monthCalendarDays(monthKey), [monthKey]);
+  const weekDates = useMemo(() => weekDaysFrom(weekKey), [weekKey]);
+  const weekDayLabels = ["日", "一", "二", "三", "四", "五", "六"];
   const eventsByDate = useMemo(() => {
     const map = new Map();
     const pushEvent = (date, event) => {
@@ -3837,6 +3941,9 @@ function DashboardCalendar({ project, todos, memos: memoItems, className = "" })
         type: "todo",
         title: todo.title,
         meta: todo.owner || todo.status,
+        status: todo.status,
+        note: todo.note,
+        time: todo.time,
       });
     });
     memoItems.forEach((memo) => {
@@ -3845,14 +3952,41 @@ function DashboardCalendar({ project, todos, memos: memoItems, className = "" })
         type: "memo",
         title: memo.title,
         meta: memo.trade || memo.status,
+        status: memo.status,
+        note: memo.note,
+        time: memo.time,
       });
     });
 
+    map.forEach((events, date) => {
+      map.set(
+        date,
+        [...events].sort((a, b) =>
+          String(a.time || "23:59").localeCompare(String(b.time || "23:59")),
+        ),
+      );
+    });
     return map;
   }, [todos, memoItems]);
-  const daysWithEvents = days
-    .map((day) => ({ ...day, events: eventsByDate.get(day.date) || [] }))
-    .filter((day) => day.currentMonth && day.events.length);
+  const title =
+    viewMode === "month"
+      ? monthTitle(monthKey)
+      : `${shortDateLabel(weekDates[0].date)}－${shortDateLabel(weekDates[6].date)}`;
+
+  function goPrevious() {
+    if (viewMode === "month") setMonthKey(moveMonth(monthKey, -1));
+    else setWeekKey(dateKeyOffset(weekKey, -7));
+  }
+
+  function goNext() {
+    if (viewMode === "month") setMonthKey(moveMonth(monthKey, 1));
+    else setWeekKey(dateKeyOffset(weekKey, 7));
+  }
+
+  function goToday() {
+    setMonthKey(todayKey().slice(0, 7));
+    setWeekKey(weekStartKey(todayKey()));
+  }
 
   return (
     <Card className={`overflow-hidden ${className}`}>
@@ -3861,23 +3995,43 @@ function DashboardCalendar({ project, todos, memos: memoItems, className = "" })
           <div className="min-w-0">
             <h2 className="text-lg font-bold">待辦事項與工項 Memo</h2>
             <p className="mt-1 break-words text-sm text-slate-500">
-              {project.name} 的月曆檢視
+              {project.name} 的{viewMode === "month" ? "月" : "週"}檢視
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center">
+          <div className="flex flex-col gap-2 sm:items-end">
+            <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+              {[
+                ["month", "月"],
+                ["week", "週"],
+              ].map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setViewMode(mode)}
+                  className={`rounded-lg px-4 py-2 text-sm font-bold transition ${
+                    viewMode === mode
+                      ? "bg-slate-950 text-white shadow-sm"
+                      : "text-slate-500 hover:text-slate-900"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center">
             <Button
               type="button"
               variant="outline"
               className="w-full sm:w-auto"
-              onClick={() => setMonthKey(moveMonth(monthKey, -1))}
+              onClick={goPrevious}
             >
-              上月
+              上{viewMode === "month" ? "月" : "週"}
             </Button>
             <Button
               type="button"
               variant="outline"
               className="w-full sm:w-auto"
-              onClick={() => setMonthKey(todayKey().slice(0, 7))}
+              onClick={goToday}
             >
               今天
             </Button>
@@ -3885,15 +4039,16 @@ function DashboardCalendar({ project, todos, memos: memoItems, className = "" })
               type="button"
               variant="outline"
               className="w-full sm:w-auto"
-              onClick={() => setMonthKey(moveMonth(monthKey, 1))}
+              onClick={goNext}
             >
-              下月
+              下{viewMode === "month" ? "月" : "週"}
             </Button>
+            </div>
           </div>
         </div>
 
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="text-xl font-bold sm:text-2xl">{monthTitle(monthKey)}</h3>
+          <h3 className="text-xl font-bold sm:text-2xl">{title}</h3>
           <div className="flex flex-wrap gap-2 text-xs">
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700">
               <span className="h-2 w-2 rounded-full bg-amber-500" />
@@ -3906,132 +4061,134 @@ function DashboardCalendar({ project, todos, memos: memoItems, className = "" })
           </div>
         </div>
 
-        <div className="sm:hidden">
-          <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-bold text-slate-500">
-            {weekDays.map((day) => (
-              <div key={day} className="py-1">
-                {day}
-              </div>
-            ))}
-          </div>
-          <div className="mt-1 grid grid-cols-7 gap-1">
-            {days.map((day) => {
-              const events = eventsByDate.get(day.date) || [];
-
-              return (
-                <div
-                  key={day.date}
-                  className={`flex aspect-square min-h-10 flex-col items-center justify-center rounded-xl border p-1 ${
-                    day.currentMonth ? "bg-white" : "bg-slate-50 text-slate-300"
-                  } ${day.isToday ? "border-slate-900" : ""}`}
-                >
-                  <span
-                    className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                      day.isToday ? "bg-slate-900 text-white" : ""
-                    }`}
+        {viewMode === "month" ? (
+          <>
+            <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-bold text-slate-500 sm:hidden">
+              {weekDayLabels.map((day) => <div key={day} className="py-1">{day}</div>)}
+            </div>
+            <div className="grid grid-cols-7 gap-1 sm:hidden">
+              {monthDays.map((day) => {
+                const events = eventsByDate.get(day.date) || [];
+                return (
+                  <div
+                    key={day.date}
+                    className={`flex h-16 min-w-0 flex-col rounded-lg border p-1 ${
+                      day.currentMonth ? "bg-white" : "bg-slate-50 text-slate-300"
+                    } ${day.isToday ? "border-slate-900" : ""}`}
                   >
-                    {day.day}
-                  </span>
-                  <div className="mt-1 flex h-2 items-center justify-center gap-0.5">
-                    {events.slice(0, 3).map((event) => (
-                      <span
-                        key={`${event.type}-${event.id}`}
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          event.type === "todo" ? "bg-amber-500" : "bg-emerald-500"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-4 max-h-80 overflow-auto rounded-2xl border bg-slate-50">
-            {daysWithEvents.length ? (
-              <div className="divide-y">
-                {daysWithEvents.map((day) => (
-                  <div key={day.date} className="grid grid-cols-[3.5rem_1fr] gap-3 p-3">
-                    <div className="text-center">
-                      <p className="text-xs text-slate-500">{shortDateLabel(day.date)}</p>
-                      <p className="mt-1 text-lg font-bold text-slate-900">{day.day}</p>
-                    </div>
-                    <div className="space-y-2">
-                      {day.events.map((event) => (
-                        <div
+                    <span className={`text-center text-xs font-bold ${day.isToday ? "text-slate-950" : ""}`}>
+                      {day.day}
+                    </span>
+                    <div className="mt-1 flex justify-center gap-0.5">
+                      {events.slice(0, 2).map((event) => (
+                        <span
                           key={`${event.type}-${event.id}`}
-                          className={`rounded-xl border px-3 py-2 text-xs ${
-                            event.type === "todo"
-                              ? "border-amber-200 bg-amber-50 text-amber-800"
-                              : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            event.type === "todo" ? "bg-amber-500" : "bg-emerald-500"
                           }`}
-                        >
-                          <p className="font-semibold">{event.title}</p>
-                          {event.meta ? <p className="mt-0.5 opacity-80">{event.meta}</p> : null}
-                        </div>
+                        />
                       ))}
                     </div>
+                    {events.length > 2 ? (
+                      <span className="mt-auto text-center text-[9px] font-bold text-slate-500">
+                        +{events.length - 2}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden overflow-x-auto rounded-2xl border bg-white sm:block">
+              <div className="grid min-w-[700px] grid-cols-7 border-b bg-slate-50">
+                {weekDayLabels.map((day) => (
+                  <div key={day} className="border-r px-3 py-2 text-center text-xs font-bold text-slate-500 last:border-r-0">
+                    {day}
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="p-5 text-center text-sm text-slate-500">
-                本月尚無待辦事項或工項 Memo。
+              <div className="grid min-w-[700px] grid-cols-7">
+                {monthDays.map((day, index) => {
+                  const events = eventsByDate.get(day.date) || [];
+                  return (
+                    <div
+                      key={day.date}
+                      className={`h-32 min-w-0 overflow-hidden border-r border-b p-2 ${
+                        day.currentMonth ? "bg-white" : "bg-slate-50 text-slate-400"
+                      } ${(index + 1) % 7 === 0 ? "border-r-0" : ""}`}
+                    >
+                      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${
+                        day.isToday ? "bg-slate-900 text-white" : ""
+                      }`}>
+                        {day.day}
+                      </span>
+                      <div className="mt-1 space-y-1">
+                        {events.slice(0, 2).map((event) => (
+                          <div
+                            key={`${event.type}-${event.id}`}
+                            className={`rounded-md border px-2 py-1 text-xs ${
+                              event.type === "todo"
+                                ? "border-amber-200 bg-amber-50 text-amber-800"
+                                : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                            }`}
+                          >
+                            <p className="truncate font-semibold">{event.title}</p>
+                          </div>
+                        ))}
+                        {events.length > 2 ? (
+                          <p className="px-2 text-xs font-bold text-slate-500">+{events.length - 2} 筆</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            )}
-          </div>
-        </div>
-
-        <div className="hidden overflow-x-auto rounded-2xl border bg-white sm:block">
-          <div className="grid min-w-[700px] grid-cols-7 border-b bg-slate-50">
-            {weekDays.map((day) => (
-              <div key={day} className="border-r px-3 py-2 text-center text-xs font-bold text-slate-500 last:border-r-0">
-                {day}
-              </div>
-            ))}
-          </div>
-          <div className="grid min-w-[700px] grid-cols-7">
-            {days.map((day, index) => {
+            </div>
+          </>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-7">
+            {weekDates.map((day, index) => {
               const events = eventsByDate.get(day.date) || [];
-
               return (
                 <div
                   key={day.date}
-                  className={`min-h-28 border-r border-b p-2 md:min-h-32 ${
-                    day.currentMonth ? "bg-white" : "bg-slate-50 text-slate-400"
-                  } ${(index + 1) % 7 === 0 ? "border-r-0" : ""}`}
+                  className={`min-w-0 rounded-2xl border p-3 ${
+                    day.isToday ? "border-slate-900 bg-slate-50 shadow-sm" : "bg-white"
+                  }`}
                 >
-                  <div className="mb-2 flex items-center justify-between">
-                    <span
-                      className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${
-                        day.isToday ? "bg-slate-900 text-white" : ""
-                      }`}
-                    >
-                      {day.day}
-                    </span>
+                  <div className="mb-3 flex items-center justify-between lg:block">
+                    <p className="text-xs font-bold text-slate-500">{weekDayLabels[index]}</p>
+                    <p className="text-lg font-black text-slate-900">{shortDateLabel(day.date)}</p>
                   </div>
-                  <div className="space-y-1">
-                    {events.slice(0, 3).map((event) => (
+                  <div className="space-y-2">
+                    {events.map((event) => (
                       <div
                         key={`${event.type}-${event.id}`}
-                        className={`rounded-md border px-2 py-1 text-xs ${
+                        className={`rounded-xl border p-3 text-xs ${
                           event.type === "todo"
-                            ? "border-amber-200 bg-amber-50 text-amber-800"
-                            : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                            ? "border-amber-200 bg-amber-50 text-amber-900"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-900"
                         }`}
                       >
-                        <p className="truncate font-semibold">{event.title}</p>
-                        {event.meta ? <p className="truncate opacity-80">{event.meta}</p> : null}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <b>{event.type === "todo" ? "待辦" : "Memo"}</b>
+                          {event.time ? <span>{event.time}</span> : null}
+                        </div>
+                        <p className="mt-1 break-words font-bold">{event.title}</p>
+                        {event.meta ? <p className="mt-1 opacity-80">{event.meta}</p> : null}
+                        {event.note ? <p className="mt-1 line-clamp-3 opacity-75">{event.note}</p> : null}
                       </div>
                     ))}
-                    {events.length > 3 ? (
-                      <p className="px-2 text-xs font-medium text-slate-500">+{events.length - 3} 筆</p>
+                    {!events.length ? (
+                      <p className="rounded-xl border border-dashed p-3 text-center text-xs text-slate-400">
+                        無事項
+                      </p>
                     ) : null}
                   </div>
                 </div>
               );
             })}
           </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -8049,12 +8206,13 @@ function NotificationCenter({ notifications, open, onOpenChange, onNavigate }) {
       <Button
         type="button"
         variant="outline"
+        size="icon"
         onClick={() => onOpenChange(!open)}
-        className="group relative h-12 w-12 rounded-2xl !border-slate-700 !bg-slate-950 p-0 !text-white shadow-xl shadow-slate-900/20 transition hover:-translate-y-0.5 hover:!bg-slate-800 hover:!text-white"
+        className="group relative h-10 w-10 rounded-xl !border-slate-700 !bg-slate-950 p-0 !text-white shadow-lg shadow-slate-900/20 transition hover:-translate-y-0.5 hover:!bg-slate-800 hover:!text-white"
         aria-label="站內通知"
         aria-expanded={open}
       >
-        <Bell className="h-5 w-5 transition group-hover:rotate-6" />
+        <Bell className="h-[18px] w-[18px] transition group-hover:rotate-6" />
         {hasNotifications ? (
           <span className="absolute -right-1.5 -top-1.5 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white">
             {notifications.length > 99 ? "99+" : notifications.length}
@@ -8090,7 +8248,7 @@ function NotificationCenter({ notifications, open, onOpenChange, onNavigate }) {
                     key={notice.id}
                     type="button"
                     onClick={() => {
-                      onNavigate(notice.module);
+                      onNavigate(notice);
                       onOpenChange(false);
                     }}
                     className="w-full rounded-xl border p-3 text-left transition hover:bg-slate-50"
@@ -8099,6 +8257,9 @@ function NotificationCenter({ notifications, open, onOpenChange, onNavigate }) {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge>{notice.type}</Badge>
+                          <span className="max-w-full truncate rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
+                            {notice.projectName}
+                          </span>
                           <span
                             className={`h-2 w-2 rounded-full ${
                               notice.tone === "danger"
@@ -10175,6 +10336,10 @@ export default function App() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationClock, setNotificationClock] = useState(() => Date.now());
+  const [notificationWorkspace, setNotificationWorkspace] = useState(() => ({
+    projects: useLocalPreview ? previewProjects : [],
+    records: Object.fromEntries(notificationRecordModules.map((module) => [module, []])),
+  }));
   const [loginTransitionUser, setLoginTransitionUser] = useState(null);
   const announcementRecords = useProjectRecords(p, "announcements", []);
   const claimRecords = useProjectRecords(p, "claims", claimSeed);
@@ -10196,6 +10361,29 @@ export default function App() {
     const timer = window.setInterval(() => setNotificationClock(Date.now()), 60 * 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!auth.user) return undefined;
+    let activeRequest = true;
+
+    async function refreshNotificationWorkspace() {
+      try {
+        const next = await loadNotificationWorkspace(p);
+        if (activeRequest) setNotificationWorkspace(next);
+      } catch {
+        // Keep the latest successful cross-project notification snapshot.
+      }
+    }
+
+    refreshNotificationWorkspace();
+    const timer = window.setInterval(refreshNotificationWorkspace, 5 * 60 * 1000);
+    window.addEventListener("eztodo:record-created", refreshNotificationWorkspace);
+    return () => {
+      activeRequest = false;
+      window.clearInterval(timer);
+      window.removeEventListener("eztodo:record-created", refreshNotificationWorkspace);
+    };
+  }, [auth.user?.id, p?.id]);
 
   useEffect(() => {
     if (useLocalPreview) return;
@@ -10321,24 +10509,49 @@ export default function App() {
     return item;
   }
 
+  const notificationRecords = useMemo(() => {
+    const live = {
+      announcements: announcementRecords.items,
+      defects: defectRecords.items,
+      meetings: meetingRecords.items,
+      todos: todoRecords.items,
+      memos: memoRecords.items,
+    };
+    return Object.fromEntries(
+      notificationRecordModules.map((module) => {
+        const otherProjects = (notificationWorkspace.records[module] || []).filter(
+          (item) => !p?.id || item.projectId !== p.id,
+        );
+        const currentProject = p
+          ? decorateNotificationRecords(live[module] || [], p)
+          : [];
+        return [module, [...otherProjects, ...currentProject]];
+      }),
+    );
+  }, [
+    p,
+    notificationWorkspace.records,
+    announcementRecords.items,
+    defectRecords.items,
+    meetingRecords.items,
+    todoRecords.items,
+    memoRecords.items,
+  ]);
+
   const projectNotifications = useMemo(
     () =>
       buildProjectNotifications(
         {
-          announcements: announcementRecords.items,
-          defects: defectRecords.items,
-          meetings: meetingRecords.items,
-          todos: todoRecords.items,
-          memos: memoRecords.items,
+          announcements: notificationRecords.announcements,
+          defects: notificationRecords.defects,
+          meetings: notificationRecords.meetings,
+          todos: notificationRecords.todos,
+          memos: notificationRecords.memos,
         },
         new Date(notificationClock),
       ),
     [
-      announcementRecords.items,
-      defectRecords.items,
-      meetingRecords.items,
-      todoRecords.items,
-      memoRecords.items,
+      notificationRecords,
       notificationClock,
     ],
   );
@@ -10551,9 +10764,16 @@ export default function App() {
         notifications={projectNotifications}
         open={notificationsOpen}
         onOpenChange={handleNotificationsOpenChange}
-        onNavigate={(moduleId) => {
-          if (canUseProjectModule(p, moduleId)) {
-            setActive(moduleId);
+        onNavigate={(notice) => {
+          const targetProject =
+            notificationWorkspace.projects.find(
+              (project) =>
+                project.id === notice.projectId ||
+                project.name === notice.projectName,
+            ) || p;
+          if (canUseProjectModule(targetProject, notice.module)) {
+            if (targetProject?.id !== p?.id) setP(targetProject);
+            setActive(notice.module);
             setModuleListOpen(false);
           }
         }}
