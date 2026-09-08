@@ -24,6 +24,9 @@
 | `email_verification_token_hash` | `text` | 驗證 token 的 SHA-256 hash |
 | `email_verification_expires_at` | `timestamptz` | 驗證連結失效時間 |
 | `email_verification_sent_at` | `timestamptz` | 最近一次寄送驗證信時間 |
+| `password_reset_token_hash` | `text` | 密碼重設 token 的 SHA-256 hash |
+| `password_reset_expires_at` | `timestamptz` | 密碼重設連結失效時間 |
+| `password_reset_sent_at` | `timestamptz` | 最近一次寄送密碼重設信時間 |
 | `last_login_at` | `timestamptz` | 最近一次成功登入時間 |
 | `created_at` | `timestamptz` | 建立時間 |
 
@@ -32,6 +35,15 @@
 若 `EMAIL_VERIFICATION_REQUIRED=true`，一般帳號必須先完成信箱驗證才可登入；管理員帳號預設視為已驗證，避免公開上線時被鎖在系統外。
 
 會員編號格式為「年份後兩碼 + 五位序號」，例如 `2600001` 代表 2026 年第 1 筆帳號。既有帳號會在資料庫初始化時自動補上會員編號，最高管理員預設為 `2600001`。
+
+### `password_reset_attempts`
+
+忘記密碼發信冷卻紀錄。此表以 Email 的 SHA-256 hash 作為 key，不儲存明文 Email；用來避免同一信箱短時間內重複寄送密碼重設信。
+
+| 欄位 | 型別 | 說明 |
+| --- | --- | --- |
+| `email_hash` | `text` | 正規化 Email 的 SHA-256 hash |
+| `sent_at` | `timestamptz` | 最近一次申請密碼重設信時間 |
 
 ### `projects`
 
@@ -423,6 +435,29 @@
 ```
 
 登入頁與帳號管理都可用此 API 重寄驗證信。
+
+### 忘記密碼
+
+`POST /api/auth/request-password-reset`
+
+```json
+{
+  "email": "site-manager@example.com"
+}
+```
+
+若寄信服務已設定，系統會依 `PASSWORD_RESET_COOLDOWN_SECONDS` 檢查同一 Email 的發送冷卻時間。為避免帳號枚舉，回應會使用「如果此信箱已註冊」的通用訊息。
+
+`POST /api/auth/reset-password`
+
+```json
+{
+  "token": "認證信連結中的 token",
+  "password": "至少 8 碼的新密碼"
+}
+```
+
+密碼重設連結有效時間由 `PASSWORD_RESET_TOKEN_MINUTES` 控制；成功設定新密碼後 token 會立即失效。
 
 ### 登入
 

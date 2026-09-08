@@ -23,6 +23,12 @@ export function verificationUrl(request, token) {
   return url.href;
 }
 
+export function passwordResetUrl(request, token) {
+  const url = new URL("/", appOrigin(request));
+  url.searchParams.set("resetPasswordToken", token);
+  return url.href;
+}
+
 export async function sendVerificationEmail({ to, name, url }) {
   if (!emailProviderConfigured()) {
     throw new ApiError(
@@ -63,6 +69,54 @@ export async function sendVerificationEmail({ to, name, url }) {
     throw new ApiError(
       502,
       data?.message || data?.error?.message || "驗證信寄送失敗，請稍後再試。",
+      "EMAIL_SEND_FAILED",
+    );
+  }
+
+  return data;
+}
+
+export async function sendPasswordResetEmail({ to, name, url }) {
+  if (!emailProviderConfigured()) {
+    throw new ApiError(
+      400,
+      "尚未設定寄信服務，請先在 Vercel Environment Variables 設定 RESEND_API_KEY 與 EMAIL_FROM。",
+      "EMAIL_PROVIDER_MISSING",
+    );
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM,
+      to: [to],
+      subject: "EZtoDO 密碼重設認證信",
+      html: `
+        <div style="font-family:Arial,'Noto Sans TC',sans-serif;line-height:1.7;color:#0f172a">
+          <h2>EZtoDO工程管理程式</h2>
+          <p>${name || "您好"}，我們收到你的密碼重設申請。請點擊下方按鈕設定新密碼。</p>
+          <p>
+            <a href="${url}" style="display:inline-block;background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none">
+              重設密碼
+            </a>
+          </p>
+          <p style="font-size:13px;color:#64748b">若你沒有申請重設密碼，可以忽略這封信；原密碼不會被變更。</p>
+          <p style="font-size:13px;color:#64748b">若按鈕無法開啟，請複製以下連結到瀏覽器：</p>
+          <p style="font-size:13px;word-break:break-all;color:#334155">${url}</p>
+        </div>
+      `,
+    }),
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(
+      502,
+      data?.message || data?.error?.message || "密碼重設信寄送失敗，請稍後再試。",
       "EMAIL_SEND_FAILED",
     );
   }

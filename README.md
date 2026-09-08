@@ -12,6 +12,7 @@
 - 待辦事項與工項 Memo 月曆可切換月／週檢視；月檢視固定格高並以「+N」收合，週檢視顯示較完整內容。
 - Memo 與待辦可設定通知時間，超過設定時間 2 小時後會自動離開通知中心。
 - 通知中心會跨案場彙整，並在每則訊息標示所屬工地。
+- 登入頁支援忘記密碼；輸入 Email 後會寄送一次性重設認證信，並以 CD 時間避免重複發送。
 
 ## 開發
 
@@ -119,6 +120,8 @@ OPENAI_API_KEY=
 OPENAI_DAILY_REPORT_MODEL=gpt-5.4-mini
 EMAIL_VERIFICATION_REQUIRED=true
 EMAIL_VERIFICATION_DAYS=2
+PASSWORD_RESET_TOKEN_MINUTES=30
+PASSWORD_RESET_COOLDOWN_SECONDS=120
 RESEND_API_KEY=
 EMAIL_FROM=EZtoDO工程管理程式 <noreply@example.com>
 APP_ORIGIN=https://your-production-domain.vercel.app
@@ -132,6 +135,8 @@ BLOB_READ_WRITE_TOKEN=
 `BLOB_READ_WRITE_TOKEN` 由 Vercel Blob Store 自動建立。設定後，工地與各模組的圖片附件會上傳到 Blob，不再保存重新整理後即失效的瀏覽器暫存網址。單張圖片上限為 4MB。
 
 `EMAIL_VERIFICATION_REQUIRED=true` 會啟用信箱驗證；一般帳號註冊後必須點擊驗證信才能登入。正式上線建議保持 `true`，並先設定 `RESEND_API_KEY`、`EMAIL_FROM` 與正式網址 `APP_ORIGIN`。
+
+忘記密碼功能同樣使用 `RESEND_API_KEY`、`EMAIL_FROM` 與 `APP_ORIGIN`。`PASSWORD_RESET_TOKEN_MINUTES` 控制重設連結有效時間，`PASSWORD_RESET_COOLDOWN_SECONDS` 控制同一 Email 重複寄送的等待秒數。
 
 第一次登入時，系統會自動建立資料表，並建立預設管理員。
 
@@ -157,6 +162,8 @@ BLOB_READ_WRITE_TOKEN=
 - `POST /api/auth/password`
 - `GET /api/auth/verify-email`
 - `POST /api/auth/resend-verification`
+- `POST /api/auth/request-password-reset`
+- `POST /api/auth/reset-password`
 - `GET /api/users`
 - `POST /api/users`
 - `PATCH /api/users/:id`

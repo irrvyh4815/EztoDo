@@ -1,11 +1,12 @@
 export const SESSION_COOKIE = "eztodo_session";
 
 export class ApiError extends Error {
-  constructor(status, message, code = "API_ERROR") {
+  constructor(status, message, code = "API_ERROR", details = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -25,6 +26,7 @@ export function jsonError(error) {
     {
       error: message,
       code: error?.code || "INTERNAL_SERVER_ERROR",
+      ...(error?.details || {}),
     },
     status,
   );

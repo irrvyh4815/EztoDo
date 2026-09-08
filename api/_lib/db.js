@@ -143,8 +143,20 @@ function hashVerificationToken(token) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function hashPasswordResetEmail(email) {
+  return createHash("sha256").update(String(email || "").trim().toLowerCase()).digest("hex");
+}
+
 function emailVerificationDays() {
   return Math.max(Number(process.env.EMAIL_VERIFICATION_DAYS || 2), 1);
+}
+
+export function passwordResetTokenMinutes() {
+  return Math.max(Number(process.env.PASSWORD_RESET_TOKEN_MINUTES || 30), 5);
+}
+
+export function passwordResetCooldownSeconds() {
+  return Math.max(Number(process.env.PASSWORD_RESET_COOLDOWN_SECONDS || 120), 30);
 }
 
 function memberNumberPrefix(date = new Date()) {
@@ -346,6 +358,9 @@ async function initializeSchema() {
       email_verification_token_hash text,
       email_verification_expires_at timestamptz,
       email_verification_sent_at timestamptz,
+      password_reset_token_hash text,
+      password_reset_expires_at timestamptz,
+      password_reset_sent_at timestamptz,
       last_login_at timestamptz,
       created_at timestamptz not null default now()
     )
@@ -361,6 +376,9 @@ async function initializeSchema() {
   await query("alter table users add column if not exists email_verification_token_hash text");
   await query("alter table users add column if not exists email_verification_expires_at timestamptz");
   await query("alter table users add column if not exists email_verification_sent_at timestamptz");
+  await query("alter table users add column if not exists password_reset_token_hash text");
+  await query("alter table users add column if not exists password_reset_expires_at timestamptz");
+  await query("alter table users add column if not exists password_reset_sent_at timestamptz");
   await query("alter table users add column if not exists last_login_at timestamptz");
   await query("update users set email_verified = true where email_verified is null");
   await query(
@@ -448,6 +466,13 @@ async function initializeSchema() {
   await query(`
     create index if not exists project_records_project_module_idx
     on project_records (project_id, module, created_at desc)
+  `);
+
+  await query(`
+    create table if not exists password_reset_attempts (
+      email_hash text primary key,
+      sent_at timestamptz not null default now()
+    )
   `);
 
   await syncSampleProjects();
@@ -549,6 +574,60 @@ export async function createEmailVerificationToken(userId) {
   return { token, user: result.rows[0] };
 }
 
+export async function reservePasswordResetCooldown(email) {
+  const emailHash = hashPasswordResetEmail(email);
+  const cooldownSeconds = passwordResetCooldownSeconds();
+  const existing = await query(
+    `select sent_at,
+            greatest(
+              0,
+              ceil(extract(epoch from (sent_at + ($2::int * interval '1 second') - now())))
+            )::int as retry_after_seconds
+     from password_reset_attempts
+     where email_hash = $1`,
+    [emailHash, cooldownSeconds],
+  );
+
+  const retryAfterSeconds = Number(existing.rows[0]?.retry_after_seconds || 0);
+  if (retryAfterSeconds > 0) {
+    throw new ApiError(
+      429,
+      `密碼重設信剛剛已送出，請 ${retryAfterSeconds} 秒後再試。`,
+      "PASSWORD_RESET_COOLDOWN",
+      { retryAfterSeconds },
+    );
+  }
+
+  await query(
+    `insert into password_reset_attempts (email_hash, sent_at)
+     values ($1, now())
+     on conflict (email_hash) do update set sent_at = now()`,
+    [emailHash],
+  );
+
+  return { cooldownSeconds };
+}
+
+export async function createPasswordResetToken(userId) {
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + passwordResetTokenMinutes() * 60 * 1000);
+  const result = await query(
+    `update users
+     set password_reset_token_hash = $2,
+         password_reset_expires_at = $3,
+         password_reset_sent_at = now()
+     where id = $1
+     returning *`,
+    [userId, hashVerificationToken(token), expiresAt],
+  );
+
+  if (!result.rows[0]) {
+    throw new ApiError(404, "找不到帳號", "USER_NOT_FOUND");
+  }
+
+  return { token, user: result.rows[0] };
+}
+
 export async function verifyEmailToken(token) {
   if (!token) return null;
 
@@ -565,6 +644,24 @@ export async function verifyEmailToken(token) {
   );
 
   return result.rows[0] || null;
+}
+
+export async function resetPasswordWithToken(token, passwordHash) {
+  if (!token) return null;
+
+  const result = await query(
+    `update users
+     set password_hash = $2,
+         password_reset_token_hash = null,
+         password_reset_expires_at = null,
+         password_reset_sent_at = null
+     where password_reset_token_hash = $1
+       and password_reset_expires_at > now()
+     returning *`,
+    [hashVerificationToken(token), passwordHash],
+  );
+
+  return result.rows[0] ? mapUser(result.rows[0]) : null;
 }
 
 export async function listUsers() {

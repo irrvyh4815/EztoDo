@@ -32,6 +32,7 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  Mail,
   MapPin,
   Megaphone,
   Package,
@@ -135,7 +136,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26062502";
+const APP_VERSION = "eztodo_26090801";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -747,10 +748,27 @@ async function apiFetch(path, options = {}) {
     const error = new Error(data?.error || "伺服器連線失敗");
     error.code = data?.code || "API_ERROR";
     error.status = response.status;
+    error.retryAfterSeconds = Number(data?.retryAfterSeconds || 0);
     throw error;
   }
 
   return data;
+}
+
+function passwordResetTokenFromLocation() {
+  if (typeof window === "undefined") return "";
+  try {
+    return new URLSearchParams(window.location.search).get("resetPasswordToken") || "";
+  } catch {
+    return "";
+  }
+}
+
+function clearPasswordResetTokenFromUrl() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("resetPasswordToken");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function stripAttachmentFile(attachment = {}) {
@@ -3327,29 +3345,84 @@ function AccordionSection({ title, desc, meta, open, onToggle, children }) {
 }
 
 function LoginScreen({ onLogin }) {
-  const [mode, setMode] = useState("login");
+  const initialResetToken = passwordResetTokenFromLocation();
+  const [mode, setMode] = useState(initialResetToken ? "reset" : "login");
   const [name, setName] = useState("");
   const [organizationName, setOrganizationName] = useState(organizationOptions[0]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetToken, setResetToken] = useState(initialResetToken);
   const [error, setError] = useState("");
   const [errorCode, setErrorCode] = useState("");
   const [resendNotice, setResendNotice] = useState("");
   const [registerNotice, setRegisterNotice] = useState("");
+  const [passwordResetNotice, setPasswordResetNotice] = useState(
+    initialResetToken ? "請輸入新密碼完成重設。" : "",
+  );
+  const [passwordResetCooldown, setPasswordResetCooldown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const loginTags = ["工地管理", "施工日報", "廠商請款", "缺失追蹤", "甘特圖", "照片附件"];
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  useEffect(() => {
+    if (passwordResetCooldown <= 0) return undefined;
+    const timer = window.setInterval(() => {
+      setPasswordResetCooldown((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [passwordResetCooldown]);
+
+  function resetLoginNotices() {
     setError("");
     setErrorCode("");
     setResendNotice("");
     setRegisterNotice("");
+    setPasswordResetNotice("");
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    resetLoginNotices();
     setLoading(true);
 
     try {
+      if (mode === "forgot") {
+        const data = await apiFetch("/api/auth/request-password-reset", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+        });
+        setPasswordResetNotice(
+          data.message || "如果此信箱已註冊，系統會寄出密碼重設認證信。",
+        );
+        setPasswordResetCooldown(Number(data.cooldownSeconds || 120));
+        return;
+      }
+
+      if (mode === "reset") {
+        if (!resetToken) {
+          throw new Error("重設連結缺少認證 token，請重新申請密碼重設信。");
+        }
+        if (password.length < 8) {
+          throw new Error("新密碼至少需要 8 碼");
+        }
+        if (password !== confirmPassword) {
+          throw new Error("兩次輸入的新密碼不一致");
+        }
+
+        const data = await apiFetch("/api/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({ token: resetToken, password }),
+        });
+        clearPasswordResetTokenFromUrl();
+        setResetToken("");
+        setPassword("");
+        setConfirmPassword("");
+        setPasswordResetNotice(data.message || "密碼已更新，請使用新密碼登入。");
+        setMode("login");
+        return;
+      }
+
       if (mode === "register") {
         if (!name.trim()) {
           throw new Error("請輸入暱稱 / 姓名");
@@ -3389,6 +3462,9 @@ function LoginScreen({ onLogin }) {
     } catch (err) {
       setError(err.message);
       setErrorCode(err.code || "");
+      if (err.code === "PASSWORD_RESET_COOLDOWN") {
+        setPasswordResetCooldown(Number(err.retryAfterSeconds || 120));
+      }
     } finally {
       setLoading(false);
     }
@@ -3466,10 +3542,7 @@ function LoginScreen({ onLogin }) {
                   type="button"
                   onClick={() => {
                     setMode(id);
-                    setError("");
-                    setErrorCode("");
-                    setResendNotice("");
-                    setRegisterNotice("");
+                    resetLoginNotices();
                   }}
                   className={`flex-1 rounded-xl px-3 py-2 text-sm font-bold transition ${
                     mode === id ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-white"
@@ -3480,12 +3553,22 @@ function LoginScreen({ onLogin }) {
               ))}
             </div>
             <h2 className="mt-5 text-xl font-bold">
-              {mode === "login" ? "登入 EZtoDO" : "建立新帳號"}
+              {mode === "register"
+                ? "建立新帳號"
+                : mode === "forgot"
+                  ? "忘記密碼"
+                  : mode === "reset"
+                    ? "設定新密碼"
+                    : "登入 EZtoDO"}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              {mode === "login"
-                ? "請輸入帳號密碼進入你的工地工作台。"
-                : "註冊帳號必須使用可收信的 Email；完成信箱驗證後，才可以進入操作頁面。"}
+              {mode === "register"
+                ? "註冊帳號必須使用可收信的 Email；完成信箱驗證後，才可以進入操作頁面。"
+                : mode === "forgot"
+                  ? "輸入註冊 Email 後，系統會寄出密碼重設認證信。為避免重複發送，寄出後會有短暫 CD 時間。"
+                  : mode === "reset"
+                    ? "請從認證信連結進入此畫面，輸入新密碼後即可回到登入頁。"
+                    : "請輸入帳號密碼進入你的工地工作台。"}
             </p>
             <form onSubmit={handleSubmit} className="mt-5 grid gap-4">
               {mode === "register" ? (
@@ -3513,37 +3596,62 @@ function LoginScreen({ onLogin }) {
                   </select>
                 </label>
               ) : null}
-              <label>
+              {mode !== "reset" ? (
+                <label>
                 <span className="text-sm font-medium">
                   {mode === "register" ? "帳號 Email" : "帳號"}
                 </span>
                 <div className="mt-2">
                   <Input value={email} onChange={setEmail} ph="email@example.com" type="email" />
                 </div>
-              </label>
-              <label>
-                <span className="text-sm font-medium">密碼</span>
-                <div className="mt-2">
-                  <Input
-                    type="password"
-                    value={password}
-                    onChange={setPassword}
-                    ph={mode === "login" ? "請輸入密碼" : "至少 8 碼"}
-                  />
-                </div>
-              </label>
-              {mode === "register" ? (
+                </label>
+              ) : null}
+              {mode !== "forgot" ? (
                 <label>
-                  <span className="text-sm font-medium">確認密碼</span>
+                  <span className="text-sm font-medium">
+                    {mode === "reset" ? "新密碼" : "密碼"}
+                  </span>
+                  <div className="mt-2">
+                    <Input
+                      type="password"
+                      value={password}
+                      onChange={setPassword}
+                      ph={mode === "login" ? "請輸入密碼" : "至少 8 碼"}
+                    />
+                  </div>
+                  {mode === "login" ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode("forgot");
+                        resetLoginNotices();
+                      }}
+                      className="mt-2 text-xs font-bold text-slate-600 underline-offset-4 hover:text-slate-900 hover:underline"
+                    >
+                      忘記密碼？
+                    </button>
+                  ) : null}
+                </label>
+              ) : null}
+              {mode === "register" || mode === "reset" ? (
+                <label>
+                  <span className="text-sm font-medium">
+                    {mode === "reset" ? "確認新密碼" : "確認密碼"}
+                  </span>
                   <div className="mt-2">
                     <Input
                       type="password"
                       value={confirmPassword}
                       onChange={setConfirmPassword}
-                      ph="再次輸入密碼"
+                      ph={mode === "reset" ? "再次輸入新密碼" : "再次輸入密碼"}
                     />
                   </div>
                 </label>
+              ) : null}
+              {mode === "reset" ? (
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-700">
+                  已讀取重設認證連結。完成後此連結會失效，請妥善保存新密碼。
+                </div>
               ) : null}
               {error ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -3578,14 +3686,49 @@ function LoginScreen({ onLogin }) {
                   {registerNotice}
                 </div>
               ) : null}
-              <Button type="submit" disabled={loading} className="mt-1">
+              {passwordResetNotice ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {passwordResetNotice}
+                </div>
+              ) : null}
+              <Button
+                type="submit"
+                disabled={loading || (mode === "forgot" && passwordResetCooldown > 0)}
+                className="mt-1"
+              >
                 {loading ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : mode === "forgot" ? (
+                  <Mail className="mr-2 h-4 w-4" />
                 ) : (
                   <LogIn className="mr-2 h-4 w-4" />
                 )}
-                {mode === "login" ? "登入" : "註冊帳號"}
+                {mode === "register"
+                  ? "註冊帳號"
+                  : mode === "forgot"
+                    ? passwordResetCooldown > 0
+                      ? `請 ${passwordResetCooldown} 秒後再寄`
+                      : "寄送密碼重設信"
+                    : mode === "reset"
+                      ? "更新密碼"
+                      : "登入"}
               </Button>
+              {mode === "forgot" || mode === "reset" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    clearPasswordResetTokenFromUrl();
+                    setResetToken("");
+                    setMode("login");
+                    setPassword("");
+                    setConfirmPassword("");
+                    resetLoginNotices();
+                  }}
+                >
+                  回到登入
+                </Button>
+              ) : null}
             </form>
           </CardContent>
         </Card>
@@ -10325,10 +10468,11 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
 }
 
 export default function App() {
+  const hasPasswordResetToken = Boolean(passwordResetTokenFromLocation());
   const [auth, setAuth] = useState(
     useLocalPreview
       ? { loading: false, user: previewUser }
-      : { loading: true, user: null },
+      : { loading: !hasPasswordResetToken, user: null },
   );
   const [active, setActive] = useState("dashboard");
   const [p, setP] = useState(null);
@@ -10387,6 +10531,10 @@ export default function App() {
 
   useEffect(() => {
     if (useLocalPreview) return;
+    if (passwordResetTokenFromLocation()) {
+      setAuth({ loading: false, user: null });
+      return;
+    }
 
     let activeRequest = true;
 

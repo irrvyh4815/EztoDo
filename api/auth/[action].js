@@ -9,17 +9,23 @@ import {
 } from "../_lib/auth.js";
 import {
   emailProviderConfigured,
+  passwordResetUrl,
+  sendPasswordResetEmail,
   sendVerificationEmail,
   verificationUrl,
   appOrigin,
 } from "../_lib/email.js";
 import {
+  createPasswordResetToken,
   createEmailVerificationToken,
   ensureSchema,
   findUserByEmail,
   findUserById,
   insertUser,
   markUserLogin,
+  passwordResetCooldownSeconds,
+  reservePasswordResetCooldown,
+  resetPasswordWithToken,
   updateUserPassword,
   updateUserProfile,
   verifyEmailToken,
@@ -267,6 +273,72 @@ async function resendVerification(request) {
   return json({ ok: true, message: "驗證信已寄出，請到信箱收信。" });
 }
 
+async function requestPasswordReset(request) {
+  if (request.method !== "POST") return methodNotAllowed(["POST"]);
+
+  const { email } = await readJson(request);
+  if (!email?.trim()) {
+    throw new ApiError(400, "請輸入要重設密碼的 Email", "EMAIL_REQUIRED");
+  }
+  if (!emailProviderConfigured()) {
+    throw new ApiError(
+      400,
+      "尚未設定寄信服務，請先設定 RESEND_API_KEY 與 EMAIL_FROM。",
+      "EMAIL_PROVIDER_MISSING",
+    );
+  }
+
+  await ensureSchema();
+  await reservePasswordResetCooldown(email);
+
+  const user = await findUserByEmail(email);
+  if (user) {
+    const { token } = await createPasswordResetToken(user.id);
+    await sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      url: passwordResetUrl(request, token),
+    });
+  }
+
+  return json({
+    ok: true,
+    cooldownSeconds: passwordResetCooldownSeconds(),
+    message: "如果此信箱已註冊，系統會寄出密碼重設認證信。請到信箱點擊連結設定新密碼。",
+  });
+}
+
+async function resetPassword(request) {
+  if (request.method !== "POST") return methodNotAllowed(["POST"]);
+
+  const { token, password } = await readJson(request);
+  if (!token?.trim()) {
+    throw new ApiError(
+      400,
+      "重設連結缺少認證 token，請重新申請密碼重設信。",
+      "RESET_TOKEN_REQUIRED",
+    );
+  }
+  if (!password || password.length < 8) {
+    throw new ApiError(400, "新密碼至少需要 8 碼", "PASSWORD_TOO_SHORT");
+  }
+
+  await ensureSchema();
+  const user = await resetPasswordWithToken(token, await hashPassword(password));
+  if (!user) {
+    throw new ApiError(
+      400,
+      "重設連結已失效或不存在，請重新申請密碼重設信。",
+      "RESET_TOKEN_INVALID",
+    );
+  }
+
+  return json({
+    ok: true,
+    message: "密碼已更新，請使用新密碼登入。",
+  });
+}
+
 async function verifyEmail(request) {
   if (request.method !== "GET") return methodNotAllowed(["GET"]);
 
@@ -329,6 +401,8 @@ export default {
       if (action === "password") return await changePassword(request);
       if (action === "profile") return await updateProfile(request);
       if (action === "resend-verification") return await resendVerification(request);
+      if (action === "request-password-reset") return await requestPasswordReset(request);
+      if (action === "reset-password") return await resetPassword(request);
       if (action === "verify-email") return await verifyEmail(request);
 
       throw new ApiError(404, "找不到此驗證 API", "AUTH_ROUTE_NOT_FOUND");
