@@ -151,12 +151,20 @@ function emailVerificationDays() {
   return Math.max(Number(process.env.EMAIL_VERIFICATION_DAYS || 2), 1);
 }
 
+function passwordResetDuration(value, fallback, minimum) {
+  if (!value?.trim()) return fallback;
+  const parsed = Number(value);
+  // Reject malformed settings before they reach PostgreSQL as invalid dates/integers.
+  if (!Number.isSafeInteger(parsed) || parsed > 2147483647) return fallback;
+  return Math.max(parsed, minimum);
+}
+
 export function passwordResetTokenMinutes() {
-  return Math.max(Number(process.env.PASSWORD_RESET_TOKEN_MINUTES || 30), 5);
+  return passwordResetDuration(process.env.PASSWORD_RESET_TOKEN_MINUTES, 30, 5);
 }
 
 export function passwordResetCooldownSeconds() {
-  return Math.max(Number(process.env.PASSWORD_RESET_COOLDOWN_SECONDS || 120), 30);
+  return passwordResetDuration(process.env.PASSWORD_RESET_COOLDOWN_SECONDS, 120, 30);
 }
 
 function memberNumberPrefix(date = new Date()) {
