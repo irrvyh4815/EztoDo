@@ -12,6 +12,7 @@ import {
   readJson,
 } from "../../../_lib/http.js";
 import { requireProjectAccess, requireProjectModuleAccess } from "../../../_lib/permissions.js";
+import { normalizePersonnel } from "../../../../shared/personnel.js";
 
 function idsFromUrl(url) {
   const parts = new URL(url).pathname.split("/").filter(Boolean);
@@ -49,6 +50,12 @@ export default {
         const body = await readJson(request);
         if (!body.title?.trim()) {
           throw new ApiError(400, "請輸入紀錄標題", "RECORD_TITLE_REQUIRED");
+        }
+        if (existingRecord.module === "personnel") {
+          try { body.payload = normalizePersonnel(body.payload); }
+          catch (error) { throw new ApiError(400, error.message, "INVALID_PERSONNEL"); }
+          body.title = body.payload.name;
+          body.status = body.payload.status;
         }
 
         const record = await updateProjectRecord(projectId, recordId, body);

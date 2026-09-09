@@ -139,6 +139,12 @@
 
 ## 通用紀錄 payload 範例
 
+### 人員配置（`personnel`）
+
+沿用 `project_records` 儲存並按 `project_id` 隔離，不需要新增資料表。姓名 `name`、管理職位 `jobTitle`、所屬單位 `organization` 為必填；可登錄 `workSummary`、`experienceYears`（相關工作年資，支援小數）、`expertise`、`phone`、`email`、`startDate`、`endDate`、`note`。
+
+`status` 為「在職／支援／已離場」，以保留人員歷史。`certificates` 是證照陣列，每筆含 `name`、`issuer`、`number`、`expiresAt`，到期日可空白。前後端均驗證年資、日期及證照格式。讀取依工地閱覽權限，新增／編輯依工地編輯權限；操作沿用既有操作紀錄。此名冊不建立登入帳號，也不修改 `project_members` 存取權限。
+
 ### 廠商請款
 
 ```json

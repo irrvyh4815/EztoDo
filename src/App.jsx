@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import HomeCalendar from "./HomeCalendar.jsx";
+import Personnel from "./Personnel.jsx";
 import { groupHomeProjects, isProjectCreator } from "./projectGroups.js";
 import { calendarModules, projectCalendarColor } from "./homeCalendar.js";
 import { motion } from "framer-motion";
@@ -102,7 +103,7 @@ function ActionBar({ children, className = "" }) {
 
 const I = {
   dashboard: Building2,
-  manual: FileText,
+  personnel: UsersRound,
   notifications: Bell,
   operationLogs: History,
   projects: Megaphone,
@@ -122,7 +123,7 @@ const I = {
 
 const mods = [
   ["dashboard", "總覽"],
-  ["manual", "操作手冊"],
+  ["personnel", "人員配置"],
   ["operationLogs", "操作紀錄"],
   ["projects", "重要公告"],
   ["contracts", "工程合約"],
@@ -139,7 +140,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26090904";
+const APP_VERSION = "eztodo_26090905";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -1225,8 +1226,6 @@ function useProjectRecords(project, module, seedItems = []) {
   return { items, loading, error, saveItem, updateItem, deleteItem, setItems };
 }
 
-console.assert(sum(claimSeed, "2026/05") === 332000, "claim total test");
-console.assert(byTrade(claimSeed, "2026/05")["水電工程"] === 200000, "trade summary test");
 
 function Badge({ children }) {
   return (
@@ -8935,292 +8934,9 @@ function Schedule({ p, items, onSave, onUpdate, onDelete }) {
   );
 }
 
-function Manual() {
-  const [showVersions, setShowVersions] = useState(false);
-  const manualSections = [
-    {
-      title: "開始使用",
-      desc: "從選擇工地開始，把每一筆資料都歸到正確案場。",
-      items: [
-        "進入系統後先創建或選擇工地。",
-        "首頁將「我建立的工地」與「受邀參與的工地」分開顯示。只有建立者可以刪除工地，受邀成員依授權參與編輯或閱覽。",
-        "首頁行事曆整合可閱覽工地的待辦、Memo、預定進度與會議；點選行程直接進入該工地對應功能。",
-        "行事曆可切換月／週、篩選工地，月份的「＋幾筆」可展開當天所有行程。",
-        "首頁行事曆預設展開，可用標題旁的「收合／展開」按鈕切換；重新展開會保留原本選擇的日期與檢視。",
-        "首頁「工地顏色」可由工地管理者設定，儲存後所有成員與裝置共用。",
-        "左側深色工地卡可查看目前案場、狀態、開工日期與累計天數。",
-        "使用功能列表切換總覽、日報、請款、缺失與其他模組。",
-      ],
-    },
-    {
-      title: "日常紀錄",
-      desc: "適合每天巡場、整理現場狀況與留下照片附件。",
-      items: [
-        "施工日報可記錄天氣、工班人數、材料與機具，也可上傳紙本日報照片交由 AI 先行填入。",
-        "AI 判讀結果會先進入可編輯表格，確認無誤後再自行儲存。",
-        "現場施工照可附掛在日報內，暫時限制每份日報最多 10 張。",
-        "施工日報可依日期區間匯出 PDF，並可選擇是否包含施工照。",
-        "各表單的已儲存列表可用日期區間與關鍵字檢索，並可匯出 A4 PDF 或列印單筆資料。",
-        "站內通知會彙整重要公告、即將到期缺失、近期會議與近期待辦事項。",
-        "操作紀錄會自動保留新增、編輯與刪除等重要動作，方便日後追蹤。",
-        "會議紀錄可保存工具箱、承攬商、工務與協議組織會議，並逐列記錄與會人員與決議事項。",
-        "工項 Memo 用來記錄需要追蹤或與業主確認的事項。",
-        "缺失改善可登錄位置、類型、負責廠商、期限與嚴重程度。",
-      ],
-    },
-    {
-      title: "合約與廠商",
-      desc: "把廠商聯絡資料、合約與請款資訊集中查找。",
-      items: [
-        "工程合約可建立廠商、聯絡人、電話與合約金額。",
-        "廠商請款可依期別、月份、工種與狀態記錄。",
-        "總覽的廠商資訊會聯動工程合約，方便快速查找電話與聯絡人。",
-      ],
-    },
-    {
-      title: "進度與行程",
-      desc: "將待辦、Memo 與預定進度轉成更容易比較的時間視圖。",
-      items: [
-        "總覽月曆會顯示待辦事項與工項 Memo。",
-        "預定進度表單儲存後會同步更新甘特圖。",
-        "甘特圖 X 軸為工作天與日期，Y 軸為工種。",
-      ],
-    },
-    {
-      title: "帳號管理",
-      desc: "一般使用者可管理自己的帳號；系統管理員另有完整管理中心。",
-      items: [
-        "右上角帳號設定可修改暱稱、變更密碼或登出。",
-        "系統管理員可進入系統管理中心查詢與管理所有註冊帳號。",
-        "帳號會記錄所屬單位，註冊與新增帳號時都需先選擇分組。",
-        "帳號列表依會員編號與所屬單位排序，可用搜尋與單位篩選快速查找人員。",
-        "帳號列表採收合式呈現，展開後可重設密碼、調整權限或重寄驗證信。",
-        "工地總覽可管理工地成員，只有被加入該工地的帳號能看到與操作資料。",
-      ],
-    },
-  ];
-  const versionNotes = [
-    {
-      version: APP_VERSION,
-      title: "站內通知與操作紀錄",
-      items: [
-        "左側功能列表新增操作紀錄，系統會自動記錄各表單新增、編輯與刪除等重要操作。",
-        "登入後右上角新增站內通知按鈕，若有重要公告、缺失期限、近期會議或待辦事項會顯示紅點。",
-        "圖片附件會透過 /api/uploads 保存到 Vercel Blob；部署前需設定 BLOB_READ_WRITE_TOKEN。",
-      ],
-    },
-    {
-      version: "eztodo_26052607",
-      title: "表單編輯與文件閱覽權限",
-      items: [
-        "各主要表單的已儲存資料新增編輯按鈕，可直接回填原表單更新內容。",
-        "工地成員權限新增請款文件與合約文件閱覽設定，可針對內外部成員分開控管。",
-        "工地職稱選單新增財務、會計、行政、採購、估算與內業工程師等內業職稱。",
-      ],
-    },
-    {
-      version: "eztodo_26052606",
-      title: "請款工作台重整",
-      items: [
-        "廠商請款新增合約請款與無合約 / 臨時發包兩種模式，可依現場實際發包方式建檔。",
-        "請款表單新增明細列、合約總額、請款總額、保留款、清潔費、保險費、其他扣款與本期應付計算。",
-        "請款頁重整為總覽、各廠商請款狀況、請款紀錄三段收合式版面，方便快速查找與彙整。",
-      ],
-    },
-    {
-      version: "eztodo_26052605",
-      title: "全表單 A4 匯出整合",
-      items: [
-        "廠商請款、工程合約、工項 Memo、檢核表、會議紀錄、缺失改善、待辦事項與通用表單新增檢索列匯出 PDF。",
-        "各表單支援日期區間、關鍵字與附件選項，單筆資料也可直接列印匯出。",
-        "A4 匯出版面改為更緊湊的列印配置，避免整筆資料強制不分頁造成大量空白。",
-      ],
-    },
-    {
-      version: "eztodo_26052604",
-      title: "施工日報匯出與總覽累計",
-      items: [
-        "施工日報匯出整合到檢索列，可依日期區間與關鍵字輸出多張日報 PDF。",
-        "展開已儲存日報後可直接列印該張單份日報。",
-        "工地總覽新增工種出工、材料與機具設備累計統計，來源為已儲存施工日報。",
-      ],
-    },
-    {
-      version: "eztodo_26052603",
-      title: "登入後轉場動畫",
-      items: [
-        "登入成功後新增工作台開啟轉場，讓登入頁到工地頁的切換更柔順。",
-        "轉場會顯示帳號權限、工地清單與表單模組載入狀態。",
-        "動畫維持短秒數，不影響日常登入效率。",
-      ],
-    },
-    {
-      version: "eztodo_26052602",
-      title: "會議紀錄模組",
-      items: [
-        "左側功能列表新增會議紀錄，可建立工具箱會議、承攬商會議、工務會議與協議組織會議。",
-        "會議表單支援逐列新增與會人員、會議內容、決議事項、負責人與追蹤期限。",
-        "會議紀錄支援日期區間 PDF 匯出，並可選擇是否包含附件圖片。",
-      ],
-    },
-    {
-      version: "eztodo_26052601",
-      title: "施工日報 PDF 匯出",
-      items: [
-        "施工日報新增 PDF 匯出入口，可依日期區間輸出彙整資料。",
-        "匯出內容包含工班、材料、機具、其他備註與彙總資訊。",
-        "匯出時可選擇是否包含現場施工照，方便依報告用途控制版面大小。",
-      ],
-    },
-    {
-      version: "eztodo_26052506",
-      title: "檢核表與表單儲存調整",
-      items: [
-        "階段檢核表移除範例資料，改由使用者自行建立。",
-        "檢核項目改成逐列新增，不需要再用逗號或換行整理。",
-        "工地內表單改寫入 project_records，刷新頁面後仍會保留已儲存資料。",
-        "工地成員新增職務名稱欄位，可搭配權限一起管理。",
-        "版本更新紀錄移到獨立頁面，操作手冊閱讀更清楚。",
-      ],
-    },
-    {
-      version: "eztodo_26052505",
-      title: "會員編號與管理名冊調整",
-      items: [
-        "所有帳號新增會員編號，最高管理員從 2600001 開始，後續帳號依序產生。",
-        "系統管理中心的搜尋功能移到帳號列表上方，並新增所屬單位篩選。",
-        "登出、刪除、移除等重要操作統一使用紅色系按鈕，並改善手機版按鈕排列。",
-      ],
-    },
-    {
-      version: "eztodo_26052504",
-      title: "一般帳號設定與註冊驗證調整",
-      items: [
-        "一般帳號右上角新增帳號設定，可自行修改暱稱、變更密碼與登出。",
-        "工地選擇頁簡化權限說明文字。",
-        "註冊帳號新增所屬單位下拉選單，目前提供測試分組1、測試分組2、測試分組3。",
-        "正式環境預設要求註冊後完成信箱驗證才能登入。",
-      ],
-    },
-    {
-      version: "eztodo_26052503",
-      title: "獨立系統管理中心",
-      items: [
-        "右上角系統管理改為全頁管理中心，僅系統管理員可使用。",
-        "帳號管理新增搜尋、帳號總覽統計、建立工地數與最後登入時間。",
-        "點開帳號後可查看帳號建立時間、信箱驗證狀態並調整權限或重設密碼。",
-      ],
-    },
-    {
-      version: "eztodo_26052502",
-      title: "多客戶工地隔離與共同管理",
-      items: [
-        "新增工地建立者與 project_members 成員權限模型。",
-        "工地列表改為只顯示自己建立或被邀請加入的工地。",
-        "工地總覽新增成員管理，可邀請已註冊帳號成為共同管理者、可編輯或僅閱覽。",
-        "選擇工地頁新增刷新工地按鈕，讓被邀請人可立即重新讀取新工地。",
-      ],
-    },
-    {
-      version: "eztodo_26052501",
-      title: "公開上線前信箱驗證",
-      items: [
-        "新增信箱驗證資料欄位、驗證連結與重寄驗證信 API。",
-        "登入時若一般帳號尚未完成信箱驗證，系統會阻擋登入並提供重寄驗證信。",
-        "帳號管理列表會顯示信箱驗證狀態，管理員可替未驗證帳號重寄驗證信。",
-      ],
-    },
-    {
-      version: "eztodo_26052402",
-      title: "施工日報 AI 匯入與照片附件",
-      items: [
-        "施工日報新增紙本日報圖片上傳與 AI 判讀填入功能。",
-        "AI 判讀後會先填入表格，使用者可修正欄位後再確認儲存。",
-        "施工日報新增現場施工照附件區，暫時限制最多 10 張。",
-      ],
-    },
-    {
-      version: "eztodo_26052401",
-      title: "初始操作手冊版本",
-      items: [
-        "新增版本號顯示，登入頁與登入後介面底部皆可核對版本。",
-        "保留單一範例工地，並在工地卡上標示範例備註。",
-        "新增操作手冊頁，後續每次版本更新都在此補充新增功能操作說明。",
-      ],
-    },
-  ];
-
-  if (showVersions) {
-    return (
-      <div>
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">版本更新紀錄</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              目前版本：{APP_VERSION}。新增功能上線時，請同步補上操作入口與注意事項。
-            </p>
-          </div>
-          <Button type="button" variant="outline" onClick={() => setShowVersions(false)}>
-            返回操作手冊
-          </Button>
-        </div>
-        <div className="grid gap-3">
-          {versionNotes.map((note) => (
-            <Card key={note.version}>
-              <CardContent className="p-5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="font-bold">{note.title}</h2>
-                  <Badge>{note.version}</Badge>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {note.items.map((item) => (
-                    <p key={item} className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                      {item}
-                    </p>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <Header
-        title="操作手冊"
-        sub={`目前版本：${APP_VERSION}。功能操作說明會隨版本更新補充。`}
-      />
-      <div className="mb-4 flex justify-end">
-        <Button type="button" variant="outline" onClick={() => setShowVersions(true)}>
-          <FileText className="mr-2 h-4 w-4" />
-          查看版本更新
-        </Button>
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {manualSections.map((section) => (
-          <Card key={section.title}>
-            <CardContent className="p-5">
-              <h2 className="text-lg font-bold">{section.title}</h2>
-              <p className="mt-1 text-sm text-slate-500">{section.desc}</p>
-              <div className="mt-4 space-y-2">
-                {section.items.map((item, index) => (
-                  <div key={item} className="flex gap-3 rounded-xl border bg-slate-50 p-3 text-sm">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
-                      {index + 1}
-                    </span>
-                    <span className="leading-6 text-slate-700">{item}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
+function PersonnelPage({ project, canEdit }) {
+  const records = useProjectRecords(project, "personnel");
+  return <Personnel project={project} records={records} canEdit={canEdit} />;
 }
 
 const placeholderModuleMap = {
@@ -10588,7 +10304,7 @@ export default function App() {
     const projectTodoItems = todoRecords.items;
     const projectDailyReports = dailyRecords.items;
 
-    if (active === "manual") return <Manual />;
+    if (active === "personnel") return <PersonnelPage key={p.id} project={p} canEdit={useLocalPreview || Boolean(p.canEdit && auth.user?.canEdit)} />;
     if (active === "operationLogs") {
       return (
         <OperationLogs
@@ -10699,6 +10415,7 @@ export default function App() {
     return <Placeholder p={p} title={mods.find((x) => x.id === active)?.label || "模組"} />;
   }, [
     active,
+    auth.user?.canEdit,
     p,
     announcementRecords.items,
     announcementRecords.loading,
@@ -10799,10 +10516,10 @@ export default function App() {
       />
       <div onPointerDownCapture={closeAdminPanel} className="min-h-screen bg-slate-50 text-slate-900">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 lg:flex-row">
-        <aside className="lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:w-72">
-          <Card className="h-full rounded-2xl">
-            <CardContent className="flex h-full flex-col p-4">
-              <div className="mb-4 overflow-hidden rounded-2xl bg-slate-950 text-white shadow-sm">
+        <aside aria-label="工地側欄" className="min-w-0 lg:sticky lg:top-4 lg:h-[calc(100dvh-2rem)] lg:w-72 lg:shrink-0">
+          <Card className="h-full overflow-hidden rounded-2xl">
+            <CardContent className="flex h-full max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-y-auto overscroll-contain p-4">
+              <div className="mb-4 shrink-0 overflow-hidden rounded-2xl bg-slate-950 text-white shadow-sm">
                 <div className="border-b border-white/10 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-300">
@@ -10879,7 +10596,7 @@ export default function App() {
                 type="button"
                 aria-expanded={moduleListOpen}
                 onClick={() => setModuleListOpen(!moduleListOpen)}
-                className="flex w-full items-center justify-between rounded-xl border bg-white px-3 py-3 text-left text-sm font-medium text-slate-900 hover:bg-slate-50"
+                className="flex w-full shrink-0 items-center justify-between rounded-xl border bg-white px-3 py-3 text-left text-sm font-medium text-slate-900 hover:bg-slate-50"
               >
                 <span className="flex min-w-0 items-center gap-3">
                   <ActiveModuleIcon className="h-5 w-5 shrink-0" />
@@ -10894,7 +10611,7 @@ export default function App() {
                   }`}
                 />
               </button>
-              <nav className={`${moduleListOpen ? "grid" : "hidden"} mt-3 gap-2`}>
+              <nav aria-label="工地功能列表" className={`${moduleListOpen ? "grid" : "hidden"} mt-3 shrink-0 gap-2`}>
                 {visibleModules.map((m) => {
                   const Icon = m.icon;
                   return (
@@ -10911,13 +10628,13 @@ export default function App() {
                           : "text-slate-600 hover:bg-slate-100"
                       }`}
                     >
-                      <Icon className="h-5 w-5" />
+                      <Icon className="h-5 w-5 shrink-0" />
                       {m.label}
                     </button>
                   );
                 })}
               </nav>
-              <VersionFooter className="mt-auto pt-4" />
+              <VersionFooter className="mt-auto shrink-0 pt-4" />
             </CardContent>
           </Card>
         </aside>

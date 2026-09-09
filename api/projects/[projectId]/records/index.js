@@ -11,6 +11,7 @@ import {
   readJson,
 } from "../../../_lib/http.js";
 import { requireProjectAccess, requireProjectModuleAccess } from "../../../_lib/permissions.js";
+import { normalizePersonnel } from "../../../../shared/personnel.js";
 
 function projectIdFromUrl(url) {
   const parts = new URL(url).pathname.split("/").filter(Boolean);
@@ -52,6 +53,12 @@ export default {
         throw new ApiError(400, "缺少資料標題", "RECORD_TITLE_REQUIRED");
       }
       await requireProjectModuleAccess(request, projectId, body.module, "edit");
+      if (body.module === "personnel") {
+        try { body.payload = normalizePersonnel(body.payload); }
+        catch (error) { throw new ApiError(400, error.message, "INVALID_PERSONNEL"); }
+        body.title = body.payload.name;
+        body.status = body.payload.status;
+      }
 
       return json(
         {
