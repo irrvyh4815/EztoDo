@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useState } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Settings2 } from "lucide-react";
+import React, { useId, useMemo, useRef, useState } from "react";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Settings2 } from "lucide-react";
 import {
   calendarDateKey, calendarDays, calendarEventsByDate, calendarModules,
   calendarPalette, projectCalendarColor, shiftCalendarDate,
@@ -9,6 +9,8 @@ const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
 const controlClass = "min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium hover:bg-slate-50 focus-visible:outline-blue-600";
 
 export default function HomeCalendar({ projects, records, onNavigate, onColorChange, savingColor, canManagePreview = false }) {
+  const [expanded, setExpanded] = useState(true);
+  const contentId = useId();
   const [anchor, setAnchor] = useState(calendarDateKey);
   const [mode, setMode] = useState("month");
   const [selectedDate, setSelectedDate] = useState(calendarDateKey);
@@ -65,8 +67,20 @@ export default function HomeCalendar({ projects, records, onNavigate, onColorCha
             <h2 className="flex items-center gap-2 text-xl font-bold"><CalendarDays className="h-5 w-5 text-blue-600" />我的工地行事曆</h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">待辦、Memo、預定進度與會議 · 點擊行程進入對應工地</p>
           </div>
-          <button type="button" className={`${controlClass} flex items-center gap-1.5`} aria-expanded={showColors} onClick={() => setShowColors(!showColors)}><Settings2 className="h-4 w-4" />工地顏色</button>
+          <div className="flex flex-wrap gap-2">
+            {expanded && <button type="button" className={`${controlClass} flex items-center gap-1.5`} aria-expanded={showColors} onClick={() => setShowColors(!showColors)}><Settings2 className="h-4 w-4" />工地顏色</button>}
+            <button type="button" className={`${controlClass} flex items-center gap-1.5`}
+              aria-expanded={expanded} aria-controls={contentId}
+              aria-label={expanded ? "收合行事曆" : "展開行事曆"}
+              onClick={() => setExpanded((current) => !current)}>
+              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {expanded ? "收合" : "展開"}
+            </button>
+          </div>
         </div>
+      </div>
+      <div id={contentId} hidden={!expanded}>
+        <div className="space-y-4 px-4 pb-4 sm:px-5 sm:pb-5">
         {showColors && <div className="rounded-2xl bg-slate-50 p-4">
           <p className="mb-3 text-xs text-slate-500">管理者可設定工地顏色，儲存後所有成員共用。工地名稱會同時顯示，方便辨識。</p>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -137,6 +151,7 @@ export default function HomeCalendar({ projects, records, onNavigate, onColorCha
           <div className="space-y-2">{eventsByDate.get(day).length ? eventsByDate.get(day).map((event) => renderEvent(event)) : <p className="py-3 text-xs text-slate-400">尚無行程</p>}</div>
         </div>)}
       </div>}
+      </div>
     </section>
   );
 }
