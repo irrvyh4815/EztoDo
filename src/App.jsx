@@ -139,8 +139,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26090903";
-const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
+const APP_VERSION = "eztodo_26090904";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -168,21 +167,6 @@ const projectJobTitleOptions = [
   "協力廠商窗口",
 ];
 
-const projects = [
-  {
-    name: SAMPLE_PROJECT_NAME,
-    owner: "範例業主",
-    status: "進行中",
-    address: "台中市東區",
-    defects: 8,
-    dailyPhotos: 32,
-    nextClaim: "2026/05",
-    startDate: "2026-02-16",
-    endDate: "2026-11-30",
-    manager: "範例工地主任",
-    note: "此工地為系統展示用範例，可用來熟悉總覽、請款、Memo、日報與缺失流程。",
-  },
-];
 
 const useLocalPreview =
   import.meta.env.DEV && String(import.meta.env.VITE_USE_API || "").toLowerCase() !== "true";
@@ -194,15 +178,7 @@ const previewUser = {
   organizationName: "測試分組1",
   role: "preview",
 };
-const previewProjects = projects.map((project, index) => ({
-  id: `preview-${index + 1}`,
-  createdBy: previewUser.id,
-  memberRole: "owner",
-  canManage: true,
-  canEdit: true,
-  canView: true,
-  ...project,
-}));
+const previewProjects = [];
 
 const adminSeedUsers = [
   {
@@ -284,211 +260,14 @@ function projectMemberRoleLabel(role) {
   }[role] || "成員";
 }
 
-const claimSeed = [
-  {
-    period: "第 1 期",
-    month: "2026/05",
-    trade: "水電工程",
-    vendor: "宏鑫水電",
-    contract: "水電配管工程",
-    contractId: "contract-1",
-    sourceType: "contract",
-    contractAmount: 1200000,
-    grossAmount: 200000,
-    retentionAmount: 10000,
-    cleaningFee: 3000,
-    insuranceFee: 2000,
-    otherDeduction: 0,
-    amount: 185000,
-    netAmount: 185000,
-    status: "待付款",
-    details: [
-      { item: "2F 水電配管", quantity: 1, unit: "式", unitPrice: 120000, amount: 120000, note: "" },
-      { item: "弱電箱與管線調整", quantity: 1, unit: "式", unitPrice: 80000, amount: 80000, note: "" },
-    ],
-    projectName: SAMPLE_PROJECT_NAME,
-  },
-  {
-    period: "第 2 期",
-    month: "2026/05",
-    trade: "泥作工程",
-    vendor: "順發泥作",
-    contract: "浴室泥作工程",
-    sourceType: "temporary",
-    contractAmount: 180000,
-    grossAmount: 132000,
-    retentionAmount: 6000,
-    cleaningFee: 0,
-    insuranceFee: 0,
-    otherDeduction: 0,
-    amount: 126000,
-    netAmount: 126000,
-    status: "審核中",
-    details: [
-      { item: "浴室泥作修補", quantity: 1, unit: "式", unitPrice: 132000, amount: 132000, note: "臨時追加" },
-    ],
-    projectName: SAMPLE_PROJECT_NAME,
-  },
-  {
-    period: "第 1 期",
-    month: "2026/06",
-    trade: "防水工程",
-    vendor: "永信防水",
-    contract: "防水工程",
-    contractId: "contract-2",
-    sourceType: "contract",
-    contractAmount: 360000,
-    grossAmount: 105000,
-    retentionAmount: 5000,
-    cleaningFee: 1000,
-    insuranceFee: 1000,
-    otherDeduction: 0,
-    amount: 98000,
-    netAmount: 98000,
-    status: "待送審",
-    details: [
-      { item: "3F 浴室防水", quantity: 1, unit: "式", unitPrice: 105000, amount: 105000, note: "" },
-    ],
-    projectName: SAMPLE_PROJECT_NAME,
-  },
-];
-
-const contractSeed = [
-  {
-    id: "contract-1",
-    projectName: SAMPLE_PROJECT_NAME,
-    name: "水電配管工程",
-    vendor: "宏鑫水電",
-    trade: "水電工程",
-    amount: 1200000,
-    status: "執行中",
-    contact: "張先生",
-    phone: "04-2222-1688",
-    email: "service@hongxin.example",
-    address: "台中市東區進德路 88 號",
-    note: "現場窗口負責配管與弱電協調。",
-    attachments: [],
-  },
-  {
-    id: "contract-2",
-    projectName: SAMPLE_PROJECT_NAME,
-    name: "防水工程",
-    vendor: "永信防水",
-    trade: "防水工程",
-    amount: 360000,
-    status: "執行中",
-    contact: "黃小姐",
-    phone: "04-2233-9777",
-    email: "contact@yongxin.example",
-    address: "台中市南區忠明南路 120 號",
-    note: "浴室與陽台防水保固五年。",
-    attachments: [],
-  },
-];
-
-const memos = [
-  [
-    "memo-1",
-    SAMPLE_PROJECT_NAME,
-    "水電工程",
-    "2F 管線路徑待確認",
-    "2026-05-26",
-    "廚房排水與弱電箱位置需與業主確認後再封板。",
-    "待確認",
-  ],
-  [
-    "memo-2",
-    SAMPLE_PROJECT_NAME,
-    "防水工程",
-    "浴室門檻加強",
-    "2026-05-28",
-    "3F 主臥浴室門檻需補強收邊，避免後續滲水爭議。",
-    "追蹤中",
-  ],
-  [
-    "memo-3",
-    SAMPLE_PROJECT_NAME,
-    "磁磚工程",
-    "磁磚到料批號",
-    "2026-05-29",
-    "客浴牆磚需確認是否同批號，避免色差。",
-    "待處理",
-  ],
-].map(([id, projectName, trade, title, date, note, status]) => ({
-  id,
-  projectName,
-  trade,
-  title,
-  date,
-  note,
-  status,
-  attachments: [],
-}));
-
+// New projects start with empty records; no built-in demonstration data.
+const claimSeed = [];
+const contractSeed = [];
+const memos = [];
 const checks = [];
-
-const defectSeed = [
-  ["3F 主臥浴室", "防水", "永信防水", "2026/05/25", "待改善", "重大"],
-  ["2F 樓梯間", "油漆", "佳美油漆", "2026/05/27", "待複驗", "一般"],
-  ["1F 客廳", "磁磚", "順發泥作", "2026/05/30", "改善中", "重要"],
-].map(([location, type, vendor, due, status, level]) => ({
-  location,
-  type,
-  vendor,
-  due,
-  status,
-  level,
-}));
-
-const scheduleSeed = [
-  {
-    id: "schedule-1",
-    projectName: SAMPLE_PROJECT_NAME,
-    trade: "防水工班",
-    name: "3F 防水試水",
-    startDate: "2026-05-25",
-    endDate: "2026-05-30",
-    percent: 65,
-    status: "進行中",
-    note: "完成後安排複驗",
-    attachments: [],
-  },
-  {
-    id: "schedule-2",
-    projectName: SAMPLE_PROJECT_NAME,
-    trade: "水電工班",
-    name: "2F 弱電箱定位",
-    startDate: "2026-05-26",
-    endDate: "2026-05-27",
-    percent: 40,
-    status: "進行中",
-    note: "需與業主確認位置",
-    attachments: [],
-  },
-];
-
-const todoSeed = [
-  {
-    id: "todo-1",
-    projectName: SAMPLE_PROJECT_NAME,
-    title: "確認浴室門檻收邊",
-    owner: "李工務",
-    date: "2026-05-25",
-    status: "重要",
-    note: "與防水複驗一起確認",
-    attachments: [],
-  },
-  {
-    id: "todo-2",
-    projectName: SAMPLE_PROJECT_NAME,
-    title: "回覆業主弱電箱位置",
-    owner: "王主任",
-    date: "2026-05-27",
-    status: "緊急",
-    note: "確認後通知水電工班",
-    attachments: [],
-  },
-];
+const defectSeed = [];
+const scheduleSeed = [];
+const todoSeed = [];
 
 const groups = {
   trade: [

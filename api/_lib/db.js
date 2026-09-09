@@ -5,21 +5,6 @@ import { ApiError } from "./http.js";
 
 const { Pool } = pg;
 
-const sampleProjects = [
-  {
-    name: "範例工地：東區住宅新建工程",
-    owner: "範例業主",
-    status: "進行中",
-    address: "台中市東區",
-    defects: 8,
-    dailyPhotos: 32,
-    nextClaim: "2026/05",
-    startDate: "2026-02-16",
-    endDate: "2026-11-30",
-    manager: "範例工地主任",
-    note: "此工地為系統展示用範例，可用來熟悉總覽、請款、Memo、日報與缺失流程。",
-  },
-];
 
 function databaseUrl() {
   return process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -257,49 +242,6 @@ async function seedAdmin() {
   }
 }
 
-async function seedProjects() {
-  const existing = await query("select count(*)::int as count from projects");
-  if (existing.rows[0].count > 0) return;
-
-  for (const project of sampleProjects) {
-    await insertProject(project);
-  }
-}
-
-async function syncSampleProjects() {
-  const sample = sampleProjects[0];
-
-  await query("delete from projects where name = $1", ["北屯店面裝修工程"]);
-  await query(
-    `update projects
-     set name = $2,
-         owner = $3,
-         status = $4,
-         address = $5,
-         defects = $6,
-         daily_photos = $7,
-         next_claim = $8,
-         start_date = $9,
-         end_date = $10,
-         manager = $11,
-         note = $12
-     where name = $1`,
-    [
-      "東區住宅新建工程",
-      sample.name,
-      sample.owner,
-      sample.status,
-      sample.address,
-      sample.defects,
-      sample.dailyPhotos,
-      sample.nextClaim,
-      sample.startDate,
-      sample.endDate,
-      sample.manager,
-      sample.note,
-    ],
-  );
-}
 
 async function firstAdminId() {
   const result = await query(
@@ -485,8 +427,6 @@ async function initializeSchema() {
     )
   `);
 
-  await syncSampleProjects();
-  await seedProjects();
   await backfillProjectOwnership();
 }
 
