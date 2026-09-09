@@ -831,8 +831,8 @@ export async function insertProject(project, userId) {
   };
 }
 
-export async function deleteProject(id) {
-  const result = await query("delete from projects where id = $1", [id]);
+export async function deleteProject(id, userId) {
+  const result = await query("delete from projects where id = $1 and coalesce(created_by, owner_id) = $2", [id, userId]);
   return result.rowCount > 0;
 }
 
@@ -951,6 +951,7 @@ export async function getProjectAccess(projectId, userId) {
   const result = await query(
     `select p.id as project_id,
             p.owner_id,
+            p.created_by,
             pm.member_role,
             pm.can_view,
             pm.can_edit,

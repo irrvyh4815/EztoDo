@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import HomeCalendar from "./HomeCalendar.jsx";
+import { groupHomeProjects, isProjectCreator } from "./projectGroups.js";
 import { calendarModules, projectCalendarColor } from "./homeCalendar.js";
 import { motion } from "framer-motion";
 import {
@@ -138,7 +139,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26090902";
+const APP_VERSION = "eztodo_26090903";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -195,6 +196,11 @@ const previewUser = {
 };
 const previewProjects = projects.map((project, index) => ({
   id: `preview-${index + 1}`,
+  createdBy: previewUser.id,
+  memberRole: "owner",
+  canManage: true,
+  canEdit: true,
+  canView: true,
   ...project,
 }));
 
@@ -3740,7 +3746,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function ProjectSelect({ onSelect }) {
+function ProjectSelect({ onSelect, currentUser }) {
   const [mode, setMode] = useState("list");
   const [list, setList] = useState(useLocalPreview ? previewProjects : []);
   const [query, setQuery] = useState("");
@@ -3848,6 +3854,11 @@ function ProjectSelect({ onSelect }) {
     let nextProject = {
       ...p,
       id: `preview-${Date.now()}`,
+      createdBy: currentUser.id,
+      memberRole: "owner",
+      canManage: true,
+      canEdit: true,
+      canView: true,
       name: p.name || "未命名工地",
       owner: p.owner || "未填寫",
       address: p.address || "未填寫地址",
@@ -3886,6 +3897,10 @@ function ProjectSelect({ onSelect }) {
 
   async function removeProject(project) {
     setError("");
+    if (!isProjectCreator(project, currentUser.id) || !project.canManage) {
+      setError("只有工地建立者可以刪除工地；受邀成員無法刪除。");
+      return;
+    }
 
     if (useLocalPreview) {
       setList(list.filter((item) => item.id !== project.id));
@@ -4042,9 +4057,13 @@ function ProjectSelect({ onSelect }) {
       ) : null}
       {!loading && <HomeCalendar projects={list} records={calendarRecords} onNavigate={onSelect}
         onColorChange={saveCalendarColor} savingColor={savingColor} canManagePreview={useLocalPreview} />}
-      <h2 className="mb-3 text-lg font-bold">我的工地 · {filteredProjects.length}</h2>
+      {!loading && groupHomeProjects(filteredProjects, currentUser.id).map((group) => (
+      <section key={group.id} aria-label={group.title} className="mb-6">
+        <h2 className="text-lg font-bold">{group.title} · {group.projects.length}</h2>
+        <p className="mb-3 mt-1 text-sm text-slate-500">{group.description}</p>
+        {!group.projects.length && <p className="rounded-2xl border border-dashed bg-white p-5 text-sm text-slate-500">{query.trim() ? "沒有符合搜尋條件的工地。" : group.id === "owned" ? "尚未建立工地，可按「新增工地」開始。" : "目前沒有受邀參與的工地。"}</p>}
       <div className="grid gap-4 md:grid-cols-2">
-        {!loading && filteredProjects.map((project) => (
+        {group.projects.map((project) => (
           <Card key={project.id || project.name} className="rounded-2xl">
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-3">
@@ -4102,7 +4121,7 @@ function ProjectSelect({ onSelect }) {
                   進入
                   <ChevronRight className="ml-2 h-4 w-4" />
                 </Button>
-                {project.canManage ? (
+                {project.canManage && isProjectCreator(project, currentUser.id) ? (
                   <Del
                     label={project.name}
                     className="w-full"
@@ -4116,6 +4135,8 @@ function ProjectSelect({ onSelect }) {
           </Card>
         ))}
       </div>
+      </section>
+      ))}
       <VersionFooter className="mt-6" />
     </Shell>
   );
@@ -9143,6 +9164,7 @@ function Manual() {
       desc: "從選擇工地開始，把每一筆資料都歸到正確案場。",
       items: [
         "進入系統後先創建或選擇工地。",
+        "首頁將「我建立的工地」與「受邀參與的工地」分開顯示。只有建立者可以刪除工地，受邀成員依授權參與編輯或閱覽。",
         "首頁行事曆整合可閱覽工地的待辦、Memo、預定進度與會議；點選行程直接進入該工地對應功能。",
         "行事曆可切換月／週、篩選工地，月份的「＋幾筆」可展開當天所有行程。",
         "首頁行事曆預設展開，可用標題旁的「收合／展開」按鈕切換；重新展開會保留原本選擇的日期與檢視。",
@@ -10953,6 +10975,7 @@ export default function App() {
         />
         <div onPointerDownCapture={closeAdminPanel}>
           <ProjectSelect
+            currentUser={auth.user}
             onSelect={(project, module = "dashboard") => {
               setP(project);
               setActive(canUseProjectModule(project, module) ? module : "dashboard");

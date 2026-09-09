@@ -10,7 +10,7 @@ export default {
       await ensureSchema();
 
       const projectId = new URL(request.url).pathname.split("/").pop();
-      await requireProjectAccess(request, projectId, "manage");
+      const { user, access } = await requireProjectAccess(request, projectId, "manage");
       if (request.method === "PATCH") {
         const { calendarColor } = await readJson(request);
         if (typeof calendarColor !== "string" || !/^#[0-9a-f]{6}$/i.test(calendarColor)) {
@@ -20,7 +20,10 @@ export default {
         if (!project) throw new ApiError(404, "找不到工地資料", "PROJECT_NOT_FOUND");
         return json({ project });
       }
-      const deleted = await deleteProject(projectId);
+      if ((access.created_by || access.owner_id) !== user.id) {
+        throw new ApiError(403, "只有工地建立者可以刪除工地；受邀成員無法刪除。", "PROJECT_CREATOR_REQUIRED");
+      }
+      const deleted = await deleteProject(projectId, user.id);
 
       if (!deleted) {
         throw new ApiError(404, "找不到工地資料", "PROJECT_NOT_FOUND");

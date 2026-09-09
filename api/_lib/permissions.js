@@ -39,6 +39,7 @@ export async function requireProjectAccess(request, projectId, permission = "vie
     return {
       user,
       access: {
+        ...access,
         member_role: "admin",
         can_view: true,
         can_edit: true,
