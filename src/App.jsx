@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import HomeCalendar from "./HomeCalendar.jsx";
+import { calendarModules, projectCalendarColor } from "./homeCalendar.js";
 import { motion } from "framer-motion";
 import {
   activeCommonSettingItems,
@@ -136,7 +138,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26090801";
+const APP_VERSION = "eztodo_26090901";
 const SAMPLE_PROJECT_NAME = "範例工地：東區住宅新建工程";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -3745,6 +3747,10 @@ function ProjectSelect({ onSelect }) {
   const [loading, setLoading] = useState(!useLocalPreview);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [calendarRecords, setCalendarRecords] = useState([]);
+  const [savingColor, setSavingColor] = useState("");
+  const loadSequence = useRef(0);
+  const colorSaveInFlight = useRef(false);
   const [p, setP] = useState({
     name: "",
     owner: "",
@@ -3758,7 +3764,25 @@ function ProjectSelect({ onSelect }) {
   });
 
   async function loadProjects({ quiet = false } = {}) {
+    if (colorSaveInFlight.current) return;
+    const sequence = ++loadSequence.current;
     if (useLocalPreview) {
+      const events = [];
+      const colors = (() => {
+        try { return JSON.parse(window.localStorage.getItem("eztodo:preview-calendar-colors") || "{}"); }
+        catch { return {}; }
+      })();
+      setList((current) => current.map((project) => ({ ...project, calendarColor: colors[project.id] || project.calendarColor })));
+      list.forEach((project) => Object.keys(calendarModules).forEach((module) => {
+        let items = seedItemsForProject(module === "schedule" ? scheduleSeed : notificationSeedItems(module), project);
+        try {
+          const saved = window.localStorage.getItem(localRecordsKey(project, module));
+          if (saved) items = JSON.parse(saved);
+        } catch { /* Keep preview defaults if local records cannot be read. */ }
+        if (Array.isArray(items)) events.push(...items.map((item) => ({ ...item, title: item.title || item.name || "未命名行程", projectId: project.id, module })));
+      }));
+      setCalendarRecords(events);
+      setLoading(false);
       setRefreshing(false);
       return;
     }
@@ -3768,19 +3792,57 @@ function ProjectSelect({ onSelect }) {
     setError("");
 
     try {
-      const data = await apiFetch("/api/projects");
+      const data = await apiFetch("/api/projects?calendar=1");
+      if (sequence !== loadSequence.current) return;
       setList(data.projects || []);
+      setCalendarRecords(data.events || []);
     } catch (err) {
-      setError(err.message);
+      if (sequence === loadSequence.current) setError(`工地與行事曆讀取失敗：${err.message}，請按「刷新工地」。`);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (sequence === loadSequence.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }
 
   useEffect(() => {
     loadProjects();
+    const refresh = () => { if (!document.hidden) loadProjects({ quiet: true }); };
+    const timer = window.setInterval(refresh, 5 * 60 * 1000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      loadSequence.current += 1;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
+
+  async function saveCalendarColor(project, calendarColor) {
+    if (colorSaveInFlight.current) return;
+    colorSaveInFlight.current = true;
+    setSavingColor(project.id);
+    setError("");
+    // Invalidate any older refresh so it cannot overwrite the saved color.
+    loadSequence.current += 1;
+    try {
+      if (useLocalPreview) {
+        const colors = Object.fromEntries(list.map((item) => [item.id, projectCalendarColor(item)]));
+        window.localStorage.setItem("eztodo:preview-calendar-colors", JSON.stringify({ ...colors, [project.id]: calendarColor }));
+      } else {
+        await apiFetch(`/api/projects/${encodeURIComponent(project.id)}`, {
+          method: "PATCH", body: JSON.stringify({ calendarColor }),
+        });
+      }
+      setList((current) => current.map((item) => item.id === project.id ? { ...item, calendarColor } : item));
+    } catch (err) {
+      setError(`顏色未儲存：${err.message}`);
+    } finally {
+      colorSaveInFlight.current = false;
+      setSavingColor("");
+      setRefreshing(false);
+    }
+  }
 
   async function createProject() {
     let nextProject = {
@@ -3934,18 +3996,18 @@ function ProjectSelect({ onSelect }) {
 
   return (
     <Shell full>
-      <div className="mb-6 flex flex-col justify-between gap-4 rounded-3xl bg-slate-900 p-6 text-white sm:flex-row sm:items-center">
+      <div className="mb-6 mt-12 flex flex-col justify-between gap-4 rounded-3xl bg-slate-900 p-6 text-white sm:mt-0 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-3xl font-bold">請先創建/選擇工地</h1>
+          <h1 className="text-3xl font-bold">我的工地工作台</h1>
           <p className="mt-2 text-sm text-slate-300">
-            只會顯示你建立或被邀請共同管理的工地。
+            一次掌握各工地排程，選擇行程或工地開始工作。
           </p>
         </div>
         <Button
           type="button"
           variant="outline"
           className="border-white/20 bg-white/10 text-white hover:bg-white/20"
-          disabled={refreshing || loading}
+          disabled={refreshing || loading || Boolean(savingColor)}
           onClick={() => loadProjects({ quiet: true })}
         >
           <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
@@ -3978,13 +4040,16 @@ function ProjectSelect({ onSelect }) {
           讀取工地資料中
         </div>
       ) : null}
+      {!loading && <HomeCalendar projects={list} records={calendarRecords} onNavigate={onSelect}
+        onColorChange={saveCalendarColor} savingColor={savingColor} canManagePreview={useLocalPreview} />}
+      <h2 className="mb-3 text-lg font-bold">我的工地 · {filteredProjects.length}</h2>
       <div className="grid gap-4 md:grid-cols-2">
         {!loading && filteredProjects.map((project) => (
           <Card key={project.id || project.name} className="rounded-2xl">
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-xl font-bold">{project.name}</h2>
+                  <h2 className="flex items-center gap-2 text-xl font-bold"><span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: projectCalendarColor(project) }} />{project.name}</h2>
                   <p className="mt-2 flex gap-1 text-sm text-slate-500">
                     <MapPin className="h-4 w-4" />
                     {project.address}
@@ -9078,6 +9143,9 @@ function Manual() {
       desc: "從選擇工地開始，把每一筆資料都歸到正確案場。",
       items: [
         "進入系統後先創建或選擇工地。",
+        "首頁行事曆整合可閱覽工地的待辦、Memo、預定進度與會議；點選行程直接進入該工地對應功能。",
+        "行事曆可切換月／週、篩選工地，月份的「＋幾筆」可展開當天所有行程。",
+        "首頁「工地顏色」可由工地管理者設定，儲存後所有成員與裝置共用。",
         "左側深色工地卡可查看目前案場、狀態、開工日期與累計天數。",
         "使用功能列表切換總覽、日報、請款、缺失與其他模組。",
       ],
@@ -10884,9 +10952,9 @@ export default function App() {
         />
         <div onPointerDownCapture={closeAdminPanel}>
           <ProjectSelect
-            onSelect={(project) => {
+            onSelect={(project, module = "dashboard") => {
               setP(project);
-              setActive("dashboard");
+              setActive(canUseProjectModule(project, module) ? module : "dashboard");
               setModuleListOpen(false);
             }}
           />

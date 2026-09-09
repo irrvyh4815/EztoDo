@@ -61,6 +61,7 @@ export function mapProject(row) {
   return {
     id: row.id,
     name: row.name,
+    calendarColor: row.calendar_color || "",
     owner: row.owner,
     status: row.status,
     address: row.address,
@@ -422,6 +423,7 @@ async function initializeSchema() {
   await query("alter table projects add column if not exists owner_id text references users(id) on delete set null");
   await query("alter table projects add column if not exists created_by text references users(id) on delete set null");
   await query("alter table projects add column if not exists attachments jsonb not null default '[]'::jsonb");
+  await query("alter table projects add column if not exists calendar_color text not null default ''");
 
   await query(`
     create table if not exists project_members (
@@ -832,6 +834,34 @@ export async function insertProject(project, userId) {
 export async function deleteProject(id) {
   const result = await query("delete from projects where id = $1", [id]);
   return result.rowCount > 0;
+}
+
+export async function updateProjectCalendarColor(id, color) {
+  const result = await query(
+    "update projects set calendar_color = $2 where id = $1 returning id, calendar_color",
+    [id, color],
+  );
+  return result.rows[0] ? { id, calendarColor: result.rows[0].calendar_color } : null;
+}
+
+export async function listCalendarRecords(user) {
+  // Only calendar fields are exposed; membership and view access are checked here,
+  // independently of the project list. Attachments and restricted modules stay out.
+  const result = await query(
+    `select r.id, r.project_id as "projectId", r.module,
+            coalesce(nullif(r.payload->>'title', ''), nullif(r.payload->>'name', ''), r.title) as title,
+            coalesce(r.payload->>'status', r.status) as status, r.payload->>'date' as date, r.payload->>'time' as time,
+            r.payload->>'startDate' as "startDate", r.payload->>'endDate' as "endDate",
+            coalesce(r.payload->>'owner', r.payload->>'trade', r.payload->>'location', '') as detail
+     from project_records r
+     join projects p on p.id = r.project_id
+     left join project_members pm on pm.project_id = p.id and pm.user_id = $1
+     where ($2 = 'admin' or (pm.user_id is not null and pm.can_view = true))
+       and r.module in ('todos', 'memos', 'schedule', 'meetings')
+     order by r.created_at asc`,
+    [user.id, user.role],
+  );
+  return result.rows;
 }
 
 export async function listProjectRecords(projectId, module) {

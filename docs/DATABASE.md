@@ -53,6 +53,7 @@
 | --- | --- | --- |
 | `id` | `text` | `project.id` |
 | `name` | `text` | 工地名稱 |
+| `calendar_color` | `text` | `calendarColor`；工地行事曆色碼，預設空字串時由工地 ID 決定顏色 |
 | `owner` | `text` | 業主 / 客戶 |
 | `status` | `text` | `籌備中`、`進行中`、`收尾中`、`暫停`、`結案` |
 | `address` | `text` | 工地地址 |
@@ -68,6 +69,10 @@
 | `created_at` | `timestamptz` | 建立時間 |
 
 ### `project_members`
+
+首頁 `GET /api/projects?calendar=1` 同時回傳工地清單與 `events`（待辦、Memo、預定進度、會議的輕量排程資料，不含附件）。行程查詢獨立檢查工地成員閱覽權限，僅系統管理員可查看全部工地。
+
+`PATCH /api/projects/:projectId` 接受 `{ "calendarColor": "#2563eb" }`，只允許具管理權限者設定六位十六進位色碼；不修改工地其他欄位。色彩由所有成員共用。既有部署透過 `ensureSchema()` 自動新增欄位，不需手動搬移資料。
 
 工地成員與多客戶隔離權限。一般使用者只能讀取自己建立或被加入的工地。
 

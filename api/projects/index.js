@@ -1,4 +1,4 @@
-import { ensureSchema, insertProject, listProjects } from "../_lib/db.js";
+import { ensureSchema, insertProject, listProjects, listCalendarRecords } from "../_lib/db.js";
 import {
   ApiError,
   json,
@@ -19,6 +19,10 @@ export default {
       const user = await requirePermission(request, request.method === "GET" ? "view" : "edit");
 
       if (request.method === "GET") {
+        if (new URL(request.url).searchParams.get("calendar") === "1") {
+          const [projects, events] = await Promise.all([listProjects(user), listCalendarRecords(user)]);
+          return json({ projects, events });
+        }
         return json({ projects: await listProjects(user) });
       }
 
