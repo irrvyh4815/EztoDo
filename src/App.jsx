@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import HomeCalendar from "./HomeCalendar.jsx";
 import Personnel from "./Personnel.jsx";
 import CalendarSubscriptionSettings from "./CalendarSubscriptionSettings.jsx";
+import MeetingTextEditor from "./MeetingTextEditor.jsx";
 import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
 import { draftKey, readBrowserDraft, persistentAttachment, localMonth, needsRecords, workspaceHash, parseWorkspaceHash } from "./workspaceUX.js";
 import { createRecordCache } from "./recordCache.js";
@@ -144,7 +145,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26091002";
+const APP_VERSION = "eztodo_26091003";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -7375,6 +7376,9 @@ function stripRowIds(rows = []) {
 
 function Meetings({ p }) {
   const { items, saveItem, updateItem: updateMeetingRecord, deleteItem, loading, error } = useProjectRecords(p, "meetings", []);
+  const [savingMeeting, setSavingMeeting] = useState(false);
+  const [meetingSaveError, setMeetingSaveError] = useState("");
+  const meetingSaveLock = useRef(false);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState(() => createMeetingDraft(p));
   const [editingId, setEditingId] = useState("");
@@ -7391,6 +7395,8 @@ function Meetings({ p }) {
   }
 
   function startEditMeeting(record) {
+    if (adding || meetingSaveLock.current) return;
+    setMeetingSaveError("");
     setDraft({
       ...createMeetingDraft(p),
       ...record,
@@ -7464,6 +7470,11 @@ function Meetings({ p }) {
   }
 
   async function saveMeeting() {
+    if (meetingSaveLock.current) return;
+    meetingSaveLock.current = true;
+    setSavingMeeting(true);
+    setMeetingSaveError("");
+    try {
     const attendees = stripRowIds(draft.attendees);
     const meetingItems = stripRowIds(draft.items);
     const next = {
@@ -7495,6 +7506,12 @@ function Meetings({ p }) {
     }
     resetDraft();
     setAdding(false);
+    } catch (saveError) {
+      setMeetingSaveError(saveError.message || "儲存失敗，已保留表單內容，請稍後重試。");
+    } finally {
+      meetingSaveLock.current = false;
+      setSavingMeeting(false);
+    }
   }
 
   const filteredMeetings = items.filter((record) => {
@@ -7559,7 +7576,8 @@ function Meetings({ p }) {
         title="會議紀錄"
         sub={`目前工地：${p.name}，可建立工具箱、承攬商、工務與協議組織會議紀錄`}
         btn="新增會議紀錄"
-        onAdd={() => {
+        onAdd={adding ? undefined : () => {
+          setMeetingSaveError("");
           resetDraft();
           setAdding(true);
           setOpenId("");
@@ -7572,7 +7590,8 @@ function Meetings({ p }) {
       ) : null}
       {adding ? (
         <Card className="mb-4">
-          <CardContent className="grid gap-4 p-5 md:grid-cols-2">
+          <fieldset disabled={savingMeeting} className="min-w-0">
+          <CardContent className="grid gap-4 p-3 sm:p-5 md:grid-cols-2">
             <label>
               <span className="text-sm font-medium">會議類型</span>
               <CustomSelect
@@ -7658,7 +7677,7 @@ function Meetings({ p }) {
                 ))}
               </div>
             </div>
-            <div className="md:col-span-2 rounded-2xl border p-4">
+            <div className="md:col-span-2 rounded-2xl border p-3 sm:p-4">
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h3 className="font-bold">會議內容 / 決議事項</h3>
                 <Button type="button" variant="outline" onClick={addMeetingItem}>
@@ -7668,7 +7687,7 @@ function Meetings({ p }) {
               </div>
               <div className="grid gap-3">
                 {draft.items.map((row, index) => (
-                  <div key={row.id} className="rounded-2xl bg-slate-50 p-4">
+                  <div key={row.id} className="min-w-0 rounded-2xl bg-slate-50 p-3 sm:p-4">
                     <div className="mb-3 flex items-center justify-between">
                       <b>內容 {index + 1}</b>
                       <Button
@@ -7681,55 +7700,23 @@ function Meetings({ p }) {
                         刪除
                       </Button>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      <Input value={row.topic} onChange={(value) => updateItem(row.id, "topic", value)} ph="項目" />
-                      <Input value={row.owner} onChange={(value) => updateItem(row.id, "owner", value)} ph="負責人" />
-                      <Input
+                    <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      <label className="grid gap-2 text-sm font-medium">議題 / 項目<Input value={row.topic} onChange={(value) => updateItem(row.id, "topic", value)} ph="例如：外牆施工進度確認" /></label>
+                      <label className="grid gap-2 text-sm font-medium">負責人<Input value={row.owner} onChange={(value) => updateItem(row.id, "owner", value)} ph="負責人或單位" /></label>
+                      <label className="grid gap-2 text-sm font-medium">預定完成日期<Input
                         type="date"
                         value={row.dueDate}
                         onChange={(value) => updateItem(row.id, "dueDate", value)}
-                      />
-                      <label className="md:col-span-2 xl:col-span-3">
-                        <span className="text-sm font-medium">內容</span>
-                        <textarea
-                          value={row.content}
-                          onChange={(event) => updateItem(row.id, "content", event.target.value)}
-                          className="mt-2 min-h-20 w-full rounded-xl border px-3 py-2 outline-none"
-                          placeholder="會議討論內容"
-                        />
-                      </label>
-                      <label className="md:col-span-2 xl:col-span-3">
-                        <span className="text-sm font-medium">決議 / 待辦</span>
-                        <textarea
-                          value={row.decision}
-                          onChange={(event) => updateItem(row.id, "decision", event.target.value)}
-                          className="mt-2 min-h-20 w-full rounded-xl border px-3 py-2 outline-none"
-                          placeholder="會議決議、待辦事項或追蹤條件"
-                        />
-                      </label>
-                      <label className="md:col-span-2 xl:col-span-3">
-                        <span className="text-sm font-medium">備註</span>
-                        <textarea
-                          value={row.note}
-                          onChange={(event) => updateItem(row.id, "note", event.target.value)}
-                          className="mt-2 min-h-16 w-full rounded-xl border px-3 py-2 outline-none"
-                          placeholder="補充說明"
-                        />
-                      </label>
+                      /></label>
+                      <MeetingTextEditor className="md:col-span-2 xl:col-span-3" label={`內容 ${index + 1} · 討論內容`} value={row.content} onChange={value => updateItem(row.id, "content", value)} minHeight={240} placeholder="記錄議題背景、討論過程與各單位意見，可直接貼上完整會議內容。" />
+                      <MeetingTextEditor className="md:col-span-2 xl:col-span-3" label={`內容 ${index + 1} · 決議 / 待辦`} value={row.decision} onChange={value => updateItem(row.id, "decision", value)} minHeight={160} placeholder="逐項記錄會議決議、執行方式與追蹤條件。" />
+                      <MeetingTextEditor className="md:col-span-2 xl:col-span-3" label={`內容 ${index + 1} · 備註`} value={row.note} onChange={value => updateItem(row.id, "note", value)} minHeight={100} placeholder="補充說明" />
                     </div>
                   </div>
                 ))}
               </div>
             </div>
-            <label className="md:col-span-2">
-              <span className="text-sm font-medium">其他備註</span>
-              <textarea
-                value={draft.note}
-                onChange={(event) => setDraft({ ...draft, note: event.target.value })}
-                className="mt-2 min-h-24 w-full rounded-xl border px-3 py-2 outline-none"
-                placeholder="補充會議結論、下次會議提醒或其他說明"
-              />
-            </label>
+            <MeetingTextEditor className="md:col-span-2" label="其他備註" value={draft.note} onChange={value => setDraft(current => ({ ...current, note: value }))} minHeight={120} placeholder="補充會議結論、下次會議提醒或其他說明" />
             <ImageAttachments
               className="md:col-span-2"
               title="會議附件圖片"
@@ -7738,6 +7725,7 @@ function Meetings({ p }) {
               value={draft.attachments}
               onChange={(attachments) => setDraft({ ...draft, attachments })}
             />
+            {meetingSaveError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 md:col-span-2">{meetingSaveError}（表單內容已保留，可重試儲存。）</p>}
             <ActionBar className="md:col-span-2">
               <Button
                 type="button"
@@ -7751,10 +7739,11 @@ function Meetings({ p }) {
               </Button>
               <Button type="button" onClick={saveMeeting}>
                 <Save className="mr-2 h-4 w-4" />
-                {editingId ? "更新會議紀錄" : "儲存會議紀錄"}
+                {savingMeeting ? "儲存中…" : editingId ? "更新會議紀錄" : "儲存會議紀錄"}
               </Button>
             </ActionBar>
           </CardContent>
+          </fieldset>
         </Card>
       ) : null}
       <Card>
