@@ -1,14 +1,18 @@
 import React, { useMemo, useRef, useState } from "react";
 import { Award, Pencil, Plus, Save, Search, UsersRound } from "lucide-react";
 import { normalizePersonnel, personnelStatuses } from "../shared/personnel.js";
+import useDraftProtection from "./useDraftProtection.js";
+import { draftKey, readBrowserDraft } from "./workspaceUX.js";
 
 const fieldClass = "mt-1 min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 const buttonClass = "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 const emptyPerson = () => ({ name: "", jobTitle: "", organization: "", workSummary: "", experienceYears: "", expertise: "", certificates: [], phone: "", email: "", startDate: "", endDate: "", status: "在職", note: "" });
 
-export default function Personnel({ project, records, canEdit }) {
-  const [draft, setDraft] = useState(null);
-  const [editingId, setEditingId] = useState(null);
+export default function Personnel({ project, userId, records, canEdit }) {
+  const storageKey = draftKey(userId, project.id || project.name, "personnel");
+  const [restored] = useState(() => readBrowserDraft(storageKey));
+  const [draft, setDraft] = useState(restored?.draft || null);
+  const [editingId, setEditingId] = useState(restored?.editingId || null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -17,6 +21,8 @@ export default function Personnel({ project, records, canEdit }) {
   const [organizationFilter, setOrganizationFilter] = useState("");
   const formRef = useRef(null);
   const busyRef = useRef(false);
+  const draftData = useMemo(() => ({ draft, editingId }), [draft, editingId]);
+  const draftError = useDraftProtection(storageKey, draftData, Boolean(draft), busy);
   const organizations = [...new Set(records.items.map((item) => item.organization).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-Hant"));
   const visible = useMemo(() => records.items.filter((item) => {
     const haystack = [item.name, item.jobTitle, item.organization, item.workSummary, item.expertise, ...(item.certificates || []).map((cert) => `${cert.name} ${cert.issuer}`)].join(" ").toLowerCase();
@@ -60,7 +66,8 @@ export default function Personnel({ project, records, canEdit }) {
       {canEdit && <button className={`${buttonClass} border-slate-900 bg-slate-900 text-white`} disabled={busy || records.loading} onClick={() => edit(null)}><Plus className="h-4 w-4" />新增人員</button>}
       <p className="w-full text-xs text-slate-500">此處為工地人員名冊，登錄人員不會建立登入帳號或授予工地權限。離場人員可保留紀錄。</p>
     </header>
-    {(error || records.error) && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error || records.error}</p>}
+    {(error || records.error || draftError) && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error || records.error || draftError}</p>}
+    {draft && <p role="status" className="rounded-xl bg-blue-50 p-3 text-sm text-blue-800">{restored ? "已還原未儲存的人員草稿。" : "草稿暫存於此瀏覽器，不會自動送出。"} 共用電腦使用完畢請儲存或取消草稿。</p>}
     {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p>}
     {!canEdit && <p className="text-sm text-slate-500">你目前只有閱覽權限。</p>}
     {draft && canEdit && <form ref={formRef} onSubmit={save} className="scroll-mt-4 rounded-2xl border bg-white p-4 sm:p-5">

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import HomeCalendar from "./HomeCalendar.jsx";
 import Personnel from "./Personnel.jsx";
+import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
+import { draftKey, readBrowserDraft, persistentAttachment, localMonth, needsRecords, workspaceHash, parseWorkspaceHash } from "./workspaceUX.js";
+import { createRecordCache } from "./recordCache.js";
 import { groupHomeProjects, isProjectCreator } from "./projectGroups.js";
 import { calendarModules, projectCalendarColor } from "./homeCalendar.js";
 import { motion } from "framer-motion";
@@ -140,7 +143,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26090905";
+const APP_VERSION = "eztodo_26091001";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -517,6 +520,7 @@ const del = (label, fn) =>
   window.confirm(`再次確認刪除「${label}」？`) &&
   fn();
 
+const recordCache = createRecordCache();
 async function apiFetch(path, options = {}) {
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
@@ -539,6 +543,8 @@ async function apiFetch(path, options = {}) {
     error.retryAfterSeconds = Number(data?.retryAfterSeconds || 0);
     throw error;
   }
+
+  if (options.method && options.method !== "GET") recordCache.clear();
 
   return data;
 }
@@ -883,21 +889,14 @@ async function loadNotificationWorkspace(currentProject) {
     return { projects: projectList, records };
   }
 
-  const projectData = await apiFetch("/api/projects");
+  const projectData = await apiFetch("/api/projects?notifications=1");
   const projectList = projectData.projects || [];
   const records = Object.fromEntries(notificationRecordModules.map((module) => [module, []]));
-  await Promise.all(
-    projectList.flatMap((project) =>
-      notificationRecordModules.map(async (module) => {
-        const data = await apiFetch(
-          `/api/projects/${encodeURIComponent(project.id)}/records?module=${encodeURIComponent(module)}`,
-        );
-        records[module].push(
-          ...decorateNotificationRecords((data.records || []).map(itemFromRecord), project),
-        );
-      }),
-    ),
-  );
+  const projectMap = new Map(projectList.map(project => [project.id, project]));
+  (projectData.notifications || []).forEach(item => {
+    const project = projectMap.get(item.projectId);
+    if (project && records[item.module]) records[item.module].push({ ...item, projectName: project.name });
+  });
   return { projects: projectList, records };
 }
 
@@ -916,20 +915,27 @@ function canUseProjectModule(project, moduleId) {
   return !projectModuleRestriction(project, moduleId);
 }
 
-function useProjectRecords(project, module, seedItems = []) {
+function useProjectRecords(project, module, seedItems = [], enabled = true) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loadedScope, setLoadedScope] = useState("");
+  const scope = JSON.stringify([project?.id || project?.name, module, project?.canViewClaims, project?.canViewContracts]);
 
   useEffect(() => {
     let active = true;
 
     if (!project?.id && !project?.name) {
       setItems([]);
+      setLoadedScope("");
+      setError("");
+      setLoading(false);
       return () => {
         active = false;
       };
     }
+
+    if (!enabled) return () => { active = false; };
 
     const restrictedMessage = projectModuleRestriction(project, module);
     if (restrictedMessage) {
@@ -953,6 +959,7 @@ function useProjectRecords(project, module, seedItems = []) {
       } else {
         setItems(seedItemsForProject(seedItems, project));
       }
+      setLoadedScope(scope);
       return () => {
         active = false;
       };
@@ -962,10 +969,9 @@ function useProjectRecords(project, module, seedItems = []) {
       setLoading(true);
       setError("");
       try {
-        const data = await apiFetch(
-          `/api/projects/${encodeURIComponent(project.id)}/records?module=${encodeURIComponent(module)}`,
-        );
-        if (active) setItems((data.records || []).map(itemFromRecord));
+        const path = `/api/projects/${encodeURIComponent(project.id)}/records?module=${encodeURIComponent(module)}`;
+        const data = await recordCache.read(`${scope}:${path}`, () => apiFetch(path));
+        if (active) { setItems((data.records || []).map(itemFromRecord)); setLoadedScope(scope); }
       } catch (err) {
         if (active) setError(err.message);
       } finally {
@@ -977,7 +983,7 @@ function useProjectRecords(project, module, seedItems = []) {
     return () => {
       active = false;
     };
-  }, [project?.id, project?.name, project?.canViewClaims, project?.canViewContracts, module]);
+  }, [project?.id, project?.name, project?.canViewClaims, project?.canViewContracts, module, enabled]);
 
   useEffect(() => {
     if (typeof window === "undefined" || (!project?.id && !project?.name)) return undefined;
@@ -1223,7 +1229,8 @@ function useProjectRecords(project, module, seedItems = []) {
     }
   }
 
-  return { items, loading, error, saveItem, updateItem, deleteItem, setItems };
+  const ready = loadedScope === scope && !projectModuleRestriction(project, module);
+  return { items: ready ? items : [], loaded: ready, loading: enabled && Boolean(project) && (loading || (!ready && !error)), error: enabled ? error : "", saveItem, updateItem, deleteItem, setItems };
 }
 
 
@@ -3642,7 +3649,7 @@ function ProjectSelect({ onSelect, currentUser }) {
       address: p.address || "未填寫地址",
       defects: 0,
       dailyPhotos: 0,
-      nextClaim: "2026/05",
+      nextClaim: localMonth().replace("-", "/"),
     };
 
     setError("");
@@ -4754,7 +4761,7 @@ function createClaimDraft(project, contracts = []) {
     sourceType: firstContract ? "contract" : "temporary",
     contractId: firstContract?.id || "",
     period: "",
-    month: project.nextClaim || todayKey().slice(0, 7).replace("-", "/"),
+    month: localMonth().replace("-", "/"),
     trade: firstContract?.trade || "",
     vendor: firstContract?.vendor || "",
     contract: firstContract?.name || "",
@@ -4828,7 +4835,8 @@ function Dashboard({
   dailyReports,
   commonSettings,
 }) {
-  const m = p.nextClaim || "2026/05";
+  const [selectedMonth, setSelectedMonth] = useState(() => localMonth());
+  const m = selectedMonth.replace("-", "/");
   const total = sum(claims, m);
   const summary = byTrade(claims, m);
   const workDays = countWorkDays(p.startDate);
@@ -4836,11 +4844,12 @@ function Dashboard({
   return (
     <div>
       <Header title="工地總覽" sub="此工地的合約、請款、日報、缺失與材料" />
+      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border bg-white p-3"><label className="text-sm font-medium">請款統計月份<input aria-label="請款統計月份" type="month" value={selectedMonth} onChange={event => { if (/^\d{4}-\d{2}$/.test(event.target.value)) setSelectedMonth(event.target.value); }} className="ml-3 min-h-11 rounded-lg border px-3" /></label><Button variant="outline" onClick={() => setSelectedMonth(localMonth())}>回到本月</Button></div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat title="工地狀態" value={p.status} desc="目前工程狀態" icon={Building2} />
         <Stat title="累計天數" value={`${workDays} 天`} desc="含週日與國定假日" icon={CalendarDays} />
         <Stat
-          title="本月廠商請款"
+          title="所選月份廠商請款"
           value={twd(total)}
           desc={`${m}，共 ${claims.filter((x) => x.month === m).length} 筆`}
           icon={WalletCards}
@@ -4850,7 +4859,7 @@ function Dashboard({
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <Card>
           <CardContent className="p-5">
-            <h2 className="mb-4 text-lg font-bold">本月請款彙整</h2>
+            <h2 className="mb-4 text-lg font-bold">所選月份請款彙整</h2>
             <div className="rounded-2xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">{m}</p>
               <p className="text-2xl font-bold">{twd(total)}</p>
@@ -6461,7 +6470,9 @@ function CommonSettings({ p, settings, onSave, dailyReports = [], loading, error
   );
 }
 
-function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
+function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
+  const storageKey = draftKey(userId, p.id || p.name, "daily");
+  const [restored] = useState(() => readBrowserDraft(storageKey));
   const empty = {
     work: {
       trade: "",
@@ -6497,20 +6508,30 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
     () => `daily-ai-source-${Math.random().toString(36).slice(2)}`,
     [],
   );
-  const [work, setWork] = useState([{ id: 1, ...empty.work }]);
-  const [mat, setMat] = useState([{ id: 1, ...empty.mat }]);
-  const [eq, setEq] = useState([{ id: 1, ...empty.eq }]);
-  const [reportDate, setReportDate] = useState("");
-  const [dayWeather, setDayWeather] = useState("");
-  const [weatherNote, setWeatherNote] = useState("");
-  const [dailyNote, setDailyNote] = useState("");
-  const [paperReport, setPaperReport] = useState(null);
-  const [sitePhotos, setSitePhotos] = useState([]);
+  const [work, setWork] = useState(restored?.work || [{ id: 1, ...empty.work }]);
+  const [mat, setMat] = useState(restored?.mat || [{ id: 1, ...empty.mat }]);
+  const [eq, setEq] = useState(restored?.eq || [{ id: 1, ...empty.eq }]);
+  const [reportDate, setReportDate] = useState(restored?.reportDate || "");
+  const [dayWeather, setDayWeather] = useState(restored?.dayWeather || "");
+  const [weatherNote, setWeatherNote] = useState(restored?.weatherNote || "");
+  const [dailyNote, setDailyNote] = useState(restored?.dailyNote || "");
+  const [paperReport, setPaperReport] = useState(restored?.paperReport || null);
+  const [sitePhotos, setSitePhotos] = useState(restored?.sitePhotos || []);
   const [aiStatus, setAiStatus] = useState("idle");
   const [aiMessage, setAiMessage] = useState("");
-  const [aiSummary, setAiSummary] = useState(null);
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState("");
+  const [aiSummary, setAiSummary] = useState(restored?.aiSummary || null);
+  const [adding, setAdding] = useState(Boolean(restored));
+  const [editingId, setEditingId] = useState(restored?.editingId || "");
+  const [savingDaily, setSavingDaily] = useState(false);
+  const savingDailyRef = useRef(false);
+  const [saveError, setSaveError] = useState("");
+  const [restoredMessage, setRestoredMessage] = useState(Boolean(restored));
+  const dailyFormRef = useRef(null);
+  const draftData = useMemo(() => ({ work, mat, eq, reportDate, dayWeather, weatherNote, dailyNote, editingId, aiSummary,
+    paperReport: persistentAttachment(paperReport), sitePhotos: sitePhotos.map(persistentAttachment).filter(Boolean),
+    missingFiles: (paperReport && !persistentAttachment(paperReport) ? 1 : 0) + sitePhotos.filter(item => !persistentAttachment(item)).length,
+  }), [work, mat, eq, reportDate, dayWeather, weatherNote, dailyNote, editingId, aiSummary, paperReport, sitePhotos]);
+  const draftError = useDraftProtection(storageKey, draftData, adding, savingDaily);
   const [dateFromQuery, setDateFromQuery] = useState("");
   const [dateToQuery, setDateToQuery] = useState("");
   const [keywordQuery, setKeywordQuery] = useState("");
@@ -6542,6 +6563,8 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
   const rem = (set, id) => set((items) => (items.length === 1 ? items : items.filter((x) => x.id !== id)));
 
   function resetDaily() {
+    setSaveError("");
+    setRestoredMessage(false);
     setEditingId("");
     setReportDate("");
     setDayWeather("");
@@ -6558,12 +6581,17 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
   }
 
   function openDailyForm() {
+    if (savingDailyRef.current || (adding && !window.confirm("確定放棄目前草稿並新增另一份日報？"))) return;
     resetDaily();
     setAdding(true);
     setOpenReportId("");
+    requestAnimationFrame(() => dailyFormRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
   }
 
   function startEditDaily(report) {
+    if (savingDailyRef.current || (adding && !window.confirm("確定放棄目前草稿並編輯這份日報？"))) return;
+    setRestoredMessage(false);
+    setSaveError("");
     setEditingId(report.id);
     setReportDate(report.date && report.date !== "未填日期" ? report.date : "");
     setDayWeather(report.weather && report.weather !== "未選擇" ? report.weather : "");
@@ -6579,6 +6607,7 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
     setEq(withRowIds(report.equipment || [], empty.eq));
     setAdding(true);
     setOpenReportId("");
+    requestAnimationFrame(() => dailyFormRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
   }
 
   function selectPaperReport(event) {
@@ -6647,6 +6676,11 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
   }
 
   async function saveDaily() {
+    if (savingDailyRef.current) return;
+    savingDailyRef.current = true;
+    setSavingDaily(true);
+    setSaveError("");
+    try {
     const totalWorkers = work.reduce((total, row) => total + Number(row.workers || 0), 0);
     const next = {
       id: editingId || Date.now(),
@@ -6661,8 +6695,8 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
       work: work.map(({ id, ...row }) => row),
       materials: mat.map(({ id, ...row }) => row),
       equipment: eq.map(({ id, ...row }) => row),
-      sourceAttachment: paperReport ? stripAttachmentFile(paperReport) : null,
-      attachments: serializeAttachments(sitePhotos),
+      sourceAttachment: paperReport,
+      attachments: sitePhotos,
       aiSummary,
       projectId: p.id,
       projectName: p.name,
@@ -6681,6 +6715,12 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
     }
     resetDaily();
     setAdding(false);
+    } catch (error) {
+      setSaveError(error.message || "日報儲存失敗，草稿已保留，請重試。");
+    } finally {
+      savingDailyRef.current = false;
+      setSavingDaily(false);
+    }
   }
 
   const filteredReports = savedReports.filter((report) => {
@@ -6753,13 +6793,16 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
         btn="新增日報"
         onAdd={openDailyForm}
       />
-      {dailyError ? (
+      {dailyError || saveError || draftError ? (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {dailyError}
+          {saveError || draftError || dailyError}
         </div>
       ) : null}
       {adding ? (
+        <div ref={dailyFormRef} className="scroll-mt-20 lg:scroll-mt-4">
+        <p role="status" className="mb-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">{restoredMessage ? "已還原上次未儲存的日報草稿。" : "文字草稿自動暫存於此瀏覽器，不會自動送出。"} 未上傳照片離開後需重新選取。{restoredMessage && restored?.missingFiles ? ` 上次有 ${restored.missingFiles} 個檔案需重新選取。` : ""}</p>
         <Card className="mb-4">
+          <fieldset disabled={savingDaily} className="min-w-0">
           <CardContent className="grid gap-4 p-5 md:grid-cols-2">
           <div className="md:col-span-2 rounded-2xl border bg-white p-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -7015,11 +7058,12 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
               placeholder="可記錄今日特殊狀況、協調事項、業主指示、停工原因或其他補充記事"
             />
           </label>
-          <ActionBar className="md:col-span-2">
+          <ActionBar className="sticky bottom-20 z-20 rounded-xl border bg-white/95 p-3 shadow-md backdrop-blur md:col-span-2 lg:bottom-4">
             <Button
               type="button"
               variant="outline"
               onClick={() => {
+                if (!window.confirm("確定捨棄這份未儲存草稿？")) return;
                 resetDaily();
                 setAdding(false);
               }}
@@ -7028,11 +7072,13 @@ function Daily({ p, records = {}, commonSettings, onQuickAddSetting }) {
             </Button>
             <Button type="button" onClick={saveDaily}>
               <Save className="mr-2 h-4 w-4" />
-              {editingId ? "更新日報" : "確認並儲存日報"}
+              {savingDaily ? "儲存中…" : editingId ? "更新日報" : "確認並儲存日報"}
             </Button>
           </ActionBar>
           </CardContent>
+          </fieldset>
         </Card>
+        </div>
       ) : null}
       <Card>
         <CardContent className="p-4">
@@ -8934,9 +8980,9 @@ function Schedule({ p, items, onSave, onUpdate, onDelete }) {
   );
 }
 
-function PersonnelPage({ project, canEdit }) {
+function PersonnelPage({ project, userId, canEdit }) {
   const records = useProjectRecords(project, "personnel");
-  return <Personnel project={project} records={records} canEdit={canEdit} />;
+  return <Personnel project={project} userId={userId} records={records} canEdit={canEdit} />;
 }
 
 const placeholderModuleMap = {
@@ -10063,6 +10109,11 @@ export default function App() {
   const [active, setActive] = useState("dashboard");
   const [p, setP] = useState(null);
   const [moduleListOpen, setModuleListOpen] = useState(false);
+  const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
+  const [routeLoading, setRouteLoading] = useState(() => Boolean(parseWorkspaceHash(window.location.hash).projectId));
+  const workspaceRef = useRef({ project: null, module: "dashboard" });
+  workspaceRef.current = { project: p, module: active };
+  const navigationSequence = useRef(0);
   const [adminOpen, setAdminOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationClock, setNotificationClock] = useState(() => Date.now());
@@ -10071,21 +10122,74 @@ export default function App() {
     records: Object.fromEntries(notificationRecordModules.map((module) => [module, []])),
   }));
   const [loginTransitionUser, setLoginTransitionUser] = useState(null);
-  const announcementRecords = useProjectRecords(p, "announcements", []);
-  const claimRecords = useProjectRecords(p, "claims", claimSeed);
-  const contractRecords = useProjectRecords(p, "contracts", contractSeed);
-  const memoRecords = useProjectRecords(p, "memos", memos);
-  const scheduleRecords = useProjectRecords(p, "schedule", scheduleSeed);
-  const meetingRecords = useProjectRecords(p, "meetings", []);
-  const todoRecords = useProjectRecords(p, "todos", todoSeed);
-  const dailyRecords = useProjectRecords(p, "daily", []);
-  const defectRecords = useProjectRecords(p, "defects", defectSeed);
-  const operationRecords = useProjectRecords(p, operationLogModule, []);
-  const commonSettingsRecords = useProjectRecords(p, "commonSettings", []);
+  const announcementRecords = useProjectRecords(p, "announcements", [], needsRecords(active, "announcements"));
+  const claimRecords = useProjectRecords(p, "claims", claimSeed, needsRecords(active, "claims"));
+  const contractRecords = useProjectRecords(p, "contracts", contractSeed, needsRecords(active, "contracts"));
+  const memoRecords = useProjectRecords(p, "memos", memos, needsRecords(active, "memos"));
+  const scheduleRecords = useProjectRecords(p, "schedule", scheduleSeed, needsRecords(active, "schedule"));
+  const meetingRecords = useProjectRecords(p, "meetings", [], false);
+  const todoRecords = useProjectRecords(p, "todos", todoSeed, needsRecords(active, "todos"));
+  const dailyRecords = useProjectRecords(p, "daily", [], needsRecords(active, "daily"));
+  const defectRecords = useProjectRecords(p, "defects", defectSeed, needsRecords(active, "defects"));
+  const operationRecords = useProjectRecords(p, operationLogModule, [], active === "operationLogs");
+  const commonSettingsRecords = useProjectRecords(p, "commonSettings", [], needsRecords(active, "commonSettings"));
   const commonSettingsValue = useMemo(
     () => normalizeCommonSettings(commonSettingsRecords.items[0] || defaultCommonSettings),
     [commonSettingsRecords.items],
   );
+
+  function applyWorkspace(project, module = "dashboard") {
+    setP(project);
+    setActive(project && canUseProjectModule(project, module) ? module : "dashboard");
+    setModuleListOpen(false);
+    setProjectDetailsOpen(false);
+    setNotificationsOpen(false);
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  function navigateWorkspace(project, module = "dashboard") {
+    if (!confirmWorkspaceLeave()) return;
+    navigationSequence.current += 1;
+    const nextModule = mods.some(item => item.id === module) && canUseProjectModule(project, module) ? module : "dashboard";
+    window.history.pushState(null, "", `${window.location.pathname}${window.location.search}${workspaceHash(project?.id, nextModule)}`);
+    applyWorkspace(project, nextModule);
+  }
+
+  useEffect(() => {
+    if (!auth.user) return;
+    let disposed = false;
+    async function restoreRoute(event) {
+      if (event && !confirmWorkspaceLeave()) {
+        const current = workspaceRef.current;
+        window.history.pushState(null, "", `${location.pathname}${location.search}${workspaceHash(current.project?.id, current.module)}`);
+        return;
+      }
+      const sequence = ++navigationSequence.current;
+      const route = parseWorkspaceHash(window.location.hash);
+      if (!route.projectId) { applyWorkspace(null); setRouteLoading(false); return; }
+      setRouteLoading(true);
+      try {
+        const current = workspaceRef.current.project;
+        const projects = current?.id === route.projectId ? [current] : useLocalPreview ? previewProjects : (await apiFetch("/api/projects")).projects;
+        if (disposed || sequence !== navigationSequence.current) return;
+        const project = projects.find(item => item.id === route.projectId);
+        const module = mods.some(item => item.id === route.module) ? route.module : "dashboard";
+        applyWorkspace(project || null, module);
+        if (!project) window.history.replaceState(null, "", `${location.pathname}${location.search}`);
+      } catch {
+        if (!disposed && sequence === navigationSequence.current) applyWorkspace(null);
+      } finally { if (!disposed && sequence === navigationSequence.current) setRouteLoading(false); }
+    }
+    restoreRoute();
+    window.addEventListener("popstate", restoreRoute);
+    return () => { disposed = true; window.removeEventListener("popstate", restoreRoute); };
+  }, [auth.user?.id]);
+
+  useEffect(() => {
+    function closeMenus(event) { if (event.key === "Escape") { setModuleListOpen(false); setProjectDetailsOpen(false); } }
+    window.addEventListener("keydown", closeMenus);
+    return () => window.removeEventListener("keydown", closeMenus);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNotificationClock(Date.now()), 60 * 1000);
@@ -10113,7 +10217,7 @@ export default function App() {
       window.clearInterval(timer);
       window.removeEventListener("eztodo:record-created", refreshNotificationWorkspace);
     };
-  }, [auth.user?.id, p?.id]);
+  }, [auth.user?.id, useLocalPreview ? p?.id : null]);
 
   useEffect(() => {
     if (useLocalPreview) return;
@@ -10141,6 +10245,9 @@ export default function App() {
   }, []);
 
   async function handleLogout() {
+    if (!confirmWorkspaceLeave()) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    recordCache.clear();
     if (useLocalPreview) {
       setP(null);
       setActive("dashboard");
@@ -10176,6 +10283,8 @@ export default function App() {
 
   function finishLoginTransition() {
     if (!loginTransitionUser) return;
+    recordCache.clear();
+    setNotificationWorkspace({ projects: [], records: Object.fromEntries(notificationRecordModules.map(module => [module, []])) });
     setAuth({ loading: false, user: loginTransitionUser });
     setActive("dashboard");
     setP(null);
@@ -10245,24 +10354,26 @@ export default function App() {
 
   const notificationRecords = useMemo(() => {
     const live = {
-      announcements: announcementRecords.items,
-      defects: defectRecords.items,
-      meetings: meetingRecords.items,
-      todos: todoRecords.items,
-      memos: memoRecords.items,
+      announcements: announcementRecords,
+      defects: defectRecords,
+      meetings: meetingRecords,
+      todos: todoRecords,
+      memos: memoRecords,
     };
     return Object.fromEntries(
       notificationRecordModules.map((module) => {
+        if (!live[module].loaded || !needsRecords(active, module)) return [module, notificationWorkspace.records[module] || []];
         const otherProjects = (notificationWorkspace.records[module] || []).filter(
           (item) => !p?.id || item.projectId !== p.id,
         );
         const currentProject = p
-          ? decorateNotificationRecords(live[module] || [], p)
+          ? decorateNotificationRecords(live[module].items || [], p)
           : [];
         return [module, [...otherProjects, ...currentProject]];
       }),
     );
   }, [
+    active,
     p,
     notificationWorkspace.records,
     announcementRecords.items,
@@ -10270,6 +10381,7 @@ export default function App() {
     meetingRecords.items,
     todoRecords.items,
     memoRecords.items,
+    announcementRecords.loaded, defectRecords.loaded, meetingRecords.loaded, todoRecords.loaded, memoRecords.loaded,
   ]);
 
   const projectNotifications = useMemo(
@@ -10296,6 +10408,13 @@ export default function App() {
     if (restriction) {
       return <ModuleRestricted title={mods.find((x) => x.id === active)?.label || "功能受限"} message={restriction} />;
     }
+    const pageResources = { claims: claimRecords, contracts: contractRecords, memos: memoRecords, todos: todoRecords,
+      daily: dailyRecords, commonSettings: commonSettingsRecords, defects: defectRecords, announcements: announcementRecords,
+      schedule: scheduleRecords, operationLogs: operationRecords };
+    const needed = Object.entries(pageResources).filter(([module]) => needsRecords(active, module)).map(([, resource]) => resource);
+    if (needed.some(resource => resource.loading)) return <div role="status" className="rounded-2xl border bg-white p-8"><Loader2 className="mb-3 h-6 w-6 animate-spin text-blue-600" />正在讀取{mods.find(item => item.id === active)?.label}資料…</div>;
+    const pageError = needed.find(resource => !resource.loaded && resource.error && !resource.error.includes("閱覽權限"));
+    if (pageError) return <div role="alert" className="rounded-2xl border bg-white p-6"><p>{pageError.error}</p><Button className="mt-3" onClick={() => { if (confirmWorkspaceLeave()) window.location.reload(); }}>重新載入</Button></div>;
     const projectContracts = contractRecords.items;
     const projectClaims = claimRecords.items;
     const projectMemos = memoRecords.items;
@@ -10304,7 +10423,7 @@ export default function App() {
     const projectTodoItems = todoRecords.items;
     const projectDailyReports = dailyRecords.items;
 
-    if (active === "personnel") return <PersonnelPage key={p.id} project={p} canEdit={useLocalPreview || Boolean(p.canEdit && auth.user?.canEdit)} />;
+    if (active === "personnel") return <PersonnelPage key={`${auth.user?.id}-${p.id}`} project={p} userId={auth.user?.id} canEdit={useLocalPreview || Boolean(p.canEdit && auth.user?.canEdit)} />;
     if (active === "operationLogs") {
       return (
         <OperationLogs
@@ -10381,7 +10500,9 @@ export default function App() {
     if (active === "daily") {
       return (
         <Daily
+          key={`${auth.user?.id}-${p.id}`}
           p={p}
+          userId={auth.user?.id}
           records={dailyRecords}
           commonSettings={commonSettingsValue}
           onQuickAddSetting={quickAddCommonSetting}
@@ -10416,6 +10537,9 @@ export default function App() {
   }, [
     active,
     auth.user?.canEdit,
+    auth.user?.id,
+    claimRecords.loading, contractRecords.loading, memoRecords.loading, todoRecords.loading, scheduleRecords.loading,
+    claimRecords.error, contractRecords.error, memoRecords.error, todoRecords.error, scheduleRecords.error,
     p,
     announcementRecords.items,
     announcementRecords.loading,
@@ -10441,7 +10565,7 @@ export default function App() {
     commonSettingsValue,
   ]);
 
-  if (auth.loading) {
+  if (auth.loading || (auth.user && routeLoading)) {
     return <LoadingScreen />;
   }
 
@@ -10473,9 +10597,7 @@ export default function App() {
           <ProjectSelect
             currentUser={auth.user}
             onSelect={(project, module = "dashboard") => {
-              setP(project);
-              setActive(canUseProjectModule(project, module) ? module : "dashboard");
-              setModuleListOpen(false);
+              navigateWorkspace(project, module);
             }}
           />
         </div>
@@ -10508,18 +10630,19 @@ export default function App() {
                 project.name === notice.projectName,
             ) || p;
           if (canUseProjectModule(targetProject, notice.module)) {
-            if (targetProject?.id !== p?.id) setP(targetProject);
-            setActive(notice.module);
-            setModuleListOpen(false);
+            navigateWorkspace(targetProject, notice.module);
           }
         }}
       />
       <div onPointerDownCapture={closeAdminPanel} className="min-h-screen bg-slate-50 text-slate-900">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 lg:flex-row">
-        <aside aria-label="工地側欄" className="min-w-0 lg:sticky lg:top-4 lg:h-[calc(100dvh-2rem)] lg:w-72 lg:shrink-0">
+        <div className="border-b bg-white px-4 pb-3 pt-5 pr-32 lg:hidden"><p className="truncate text-sm font-bold">{p.name}</p><p className="mt-1 text-xs text-slate-500">{activeModule.label}</p></div>
+        {(moduleListOpen || projectDetailsOpen) && <button aria-label="關閉工地選單" onClick={() => { setModuleListOpen(false); setProjectDetailsOpen(false); }} className="fixed inset-0 z-30 bg-slate-950/30 lg:hidden" />}
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 pb-28 lg:flex-row lg:pb-4">
+        <aside aria-label="工地側欄" className={`${moduleListOpen || projectDetailsOpen ? "block" : "hidden"} fixed inset-x-4 top-28 bottom-24 z-40 min-w-0 lg:sticky lg:inset-x-auto lg:bottom-auto lg:top-4 lg:z-auto lg:block lg:h-[calc(100dvh-2rem)] lg:w-64 lg:shrink-0`}>
           <Card className="h-full overflow-hidden rounded-2xl">
             <CardContent className="flex h-full max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-y-auto overscroll-contain p-4">
-              <div className="mb-4 shrink-0 overflow-hidden rounded-2xl bg-slate-950 text-white shadow-sm">
+              <div className="mb-3 shrink-0 rounded-xl bg-slate-950 p-3 text-white"><p className="break-words font-bold">{p.name}</p><button type="button" aria-expanded={projectDetailsOpen} onClick={() => setProjectDetailsOpen(!projectDetailsOpen)} className="mt-2 min-h-10 text-xs text-slate-200">{projectDetailsOpen ? "收合工地資訊" : "展開工地資訊"}</button><button type="button" onClick={() => navigateWorkspace(null)} className="ml-3 min-h-10 text-xs text-slate-200">切換工地</button></div>
+              <div className={`${projectDetailsOpen ? "" : "hidden"} mb-4 shrink-0 overflow-hidden rounded-2xl bg-slate-950 text-white shadow-sm`}>
                 <div className="border-b border-white/10 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-300">
@@ -10579,7 +10702,7 @@ export default function App() {
                 <div className="px-4 pb-4">
                   <button
                     type="button"
-                    onClick={() => setP(null)}
+                    onClick={() => navigateWorkspace(null)}
                     className="group flex w-full items-center justify-between gap-3 rounded-xl bg-white px-3 py-3 text-left text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
                   >
                     <span>
@@ -10596,7 +10719,7 @@ export default function App() {
                 type="button"
                 aria-expanded={moduleListOpen}
                 onClick={() => setModuleListOpen(!moduleListOpen)}
-                className="flex w-full shrink-0 items-center justify-between rounded-xl border bg-white px-3 py-3 text-left text-sm font-medium text-slate-900 hover:bg-slate-50"
+                className="flex w-full shrink-0 items-center justify-between rounded-xl border bg-white px-3 py-3 text-left text-sm font-medium text-slate-900 hover:bg-slate-50 lg:hidden"
               >
                 <span className="flex min-w-0 items-center gap-3">
                   <ActiveModuleIcon className="h-5 w-5 shrink-0" />
@@ -10611,17 +10734,21 @@ export default function App() {
                   }`}
                 />
               </button>
-              <nav aria-label="工地功能列表" className={`${moduleListOpen ? "grid" : "hidden"} mt-3 shrink-0 gap-2`}>
-                {visibleModules.map((m) => {
+              <nav aria-label="工地功能列表" className={`${moduleListOpen ? "grid" : "hidden"} mt-3 shrink-0 gap-1 lg:grid`}>
+                {[
+                  ["現場工作", ["dashboard", "daily", "todos", "memos", "defects", "photos"]],
+                  ["人員與排程", ["personnel", "schedule", "meetings", "checklists", "projects"]],
+                  ["合約與資源", ["contracts", "claims", "materials", "commonSettings", "operationLogs"]],
+                ].map(([label, ids]) => <section key={label} className="grid gap-1"><h3 className="px-3 pt-3 text-xs font-semibold text-slate-400">{label}</h3>{ids.map(id => visibleModules.find(item => item.id === id)).filter(Boolean).map((m) => {
                   const Icon = m.icon;
                   return (
                     <button
                       key={m.id}
                       type="button"
                       onClick={() => {
-                        setActive(m.id);
-                        setModuleListOpen(false);
+                        navigateWorkspace(p, m.id);
                       }}
+                      aria-current={active === m.id ? "page" : undefined}
                       className={`flex gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium ${
                         active === m.id
                           ? "bg-slate-900 text-white"
@@ -10632,13 +10759,13 @@ export default function App() {
                       {m.label}
                     </button>
                   );
-                })}
+                })}</section>)}
               </nav>
               <VersionFooter className="mt-auto shrink-0 pt-4" />
             </CardContent>
           </Card>
         </aside>
-        <main className="min-w-0 flex-1 pt-28 lg:pt-0">
+        <main className="min-w-0 flex-1 pt-6 lg:pt-12">
           <motion.div
             key={`${p.name}-${active}`}
             initial={{ opacity: 0, y: 8 }}
@@ -10649,6 +10776,11 @@ export default function App() {
           </motion.div>
         </main>
         </div>
+        <nav aria-label="手機快捷導覽" className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around gap-2 border-t bg-white/95 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-lg backdrop-blur lg:hidden">
+          <Button variant="outline" onClick={() => navigateWorkspace(null)}>工地首頁</Button>
+          <Button variant="outline" aria-expanded={projectDetailsOpen} onClick={() => { setProjectDetailsOpen(!projectDetailsOpen); setModuleListOpen(false); }}>工地資訊</Button>
+          <Button aria-expanded={moduleListOpen} onClick={() => { setModuleListOpen(!moduleListOpen); setProjectDetailsOpen(false); }}><ListChecks className="mr-1 h-4 w-4" />功能選單</Button>
+        </nav>
       </div>
     </>
   );

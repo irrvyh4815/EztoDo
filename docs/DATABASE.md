@@ -139,6 +139,14 @@
 
 ## 通用紀錄 payload 範例
 
+### 工作台體驗與草稿
+
+施工日報、人員配置的未送出草稿以 `eztodo:draft:v1:{userId}:{projectId}:{module}` 存在本機瀏覽器 localStorage，並非資料庫紀錄；不同帳號／工地／模組分開。儲存成功或明確取消後移除。共用電腦請先儲存或取消草稿，清除瀏覽器資料也會清除草稿。未上傳 File／blob 不會持久化，重新開啟時提示重新選取照片；已上傳的 HTTPS 附件保留參照。
+
+`GET /api/projects?notifications=1` 使用單一權限篩選查詢彙整五類通知所需欄位，不傳回附件、合約、請款或完整表單。工地模組依目前頁面需求載入，紀錄 GET 使用 30 秒記憶體快取並合併同時請求，資料異動與登入／登出會清空快取。URL hash 保存工地 ID 與功能，重新載入時重新驗證可見工地，不將會員權限寫入 URL。
+
+總覽請款統計改為明確的月份選擇，預設當月；不修改歷史請款紀錄。
+
 ### 人員配置（`personnel`）
 
 沿用 `project_records` 儲存並按 `project_id` 隔離，不需要新增資料表。姓名 `name`、管理職位 `jobTitle`、所屬單位 `organization` 為必填；可登錄 `workSummary`、`experienceYears`（相關工作年資，支援小數）、`expertise`、`phone`、`email`、`startDate`、`endDate`、`note`。

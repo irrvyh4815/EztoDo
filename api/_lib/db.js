@@ -734,7 +734,7 @@ export async function insertProject(project, userId) {
       project.address || "未填寫地址",
       Number(project.defects || 0),
       Number(project.dailyPhotos || 0),
-      project.nextClaim || "2026/05",
+      project.nextClaim || new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Taipei" }).slice(0, 7).replace("-", "/"),
       project.startDate || "",
       project.endDate || "",
       project.manager || "",
@@ -800,6 +800,30 @@ export async function listCalendarRecords(user) {
        and r.module in ('todos', 'memos', 'schedule', 'meetings')
      order by r.created_at asc`,
     [user.id, user.role],
+  );
+  return result.rows;
+}
+
+export async function listNotificationRecords(user) {
+  // A single permission-filtered query replaces five requests per project.
+  // Only notification display fields are returned, never attachments or full forms.
+  const result = await query(
+    `select r.id, r.project_id as "projectId", r.module,
+       coalesce(r.payload->>'status', r.status) as status,
+       coalesce(r.payload->>'title', r.title) as title,
+       r.payload->>'name' as name, r.payload->>'note' as note,
+       r.payload->>'date' as date, r.payload->>'time' as time,
+       r.payload->>'reminderTime' as "reminderTime", r.payload->>'dueTime' as "dueTime",
+       r.payload->>'due' as due, r.payload->>'location' as location,
+       r.payload->>'type' as type, r.payload->>'vendor' as vendor,
+       r.payload->>'owner' as owner, r.payload->>'trade' as trade,
+       r.payload->>'meetingType' as "meetingType", r.payload->>'recorder' as recorder,
+       r.created_at as "createdAt"
+     from project_records r join projects p on p.id = r.project_id
+     left join project_members pm on pm.project_id = p.id and pm.user_id = $1
+     where ($2 = 'admin' or (pm.user_id is not null and pm.can_view = true))
+       and r.module in ('announcements', 'defects', 'meetings', 'todos', 'memos')
+     order by r.created_at desc`, [user.id, user.role],
   );
   return result.rows;
 }
