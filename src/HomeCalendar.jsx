@@ -1,4 +1,5 @@
 import React, { useId, useMemo, useRef, useState } from "react";
+import CalendarSubscriptionSettings from "./CalendarSubscriptionSettings.jsx";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Settings2 } from "lucide-react";
 import {
   calendarDateKey, calendarDays, calendarEventsByDate, calendarModules,
@@ -68,6 +69,7 @@ export default function HomeCalendar({ projects, records, onNavigate, onColorCha
             <p className="mt-1 text-xs leading-5 text-slate-500">待辦、Memo、預定進度與會議 · 點擊行程進入對應工地</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <CalendarSubscriptionSettings projects={availableProjects} preview={canManagePreview} />
             {expanded && <button type="button" className={`${controlClass} flex items-center gap-1.5`} aria-expanded={showColors} onClick={() => setShowColors(!showColors)}><Settings2 className="h-4 w-4" />工地顏色</button>}
             <button type="button" className={`${controlClass} flex items-center gap-1.5`}
               aria-expanded={expanded} aria-controls={contentId}

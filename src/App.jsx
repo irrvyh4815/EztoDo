@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import HomeCalendar from "./HomeCalendar.jsx";
 import Personnel from "./Personnel.jsx";
+import CalendarSubscriptionSettings from "./CalendarSubscriptionSettings.jsx";
 import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
 import { draftKey, readBrowserDraft, persistentAttachment, localMonth, needsRecords, workspaceHash, parseWorkspaceHash } from "./workspaceUX.js";
 import { createRecordCache } from "./recordCache.js";
@@ -143,7 +144,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26091001";
+const APP_VERSION = "eztodo_26091002";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -4844,6 +4845,7 @@ function Dashboard({
   return (
     <div>
       <Header title="工地總覽" sub="此工地的合約、請款、日報、缺失與材料" />
+      <div className="mb-3 flex justify-end"><CalendarSubscriptionSettings projects={[p]} preview={useLocalPreview} /></div>
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border bg-white p-3"><label className="text-sm font-medium">請款統計月份<input aria-label="請款統計月份" type="month" value={selectedMonth} onChange={event => { if (/^\d{4}-\d{2}$/.test(event.target.value)) setSelectedMonth(event.target.value); }} className="ml-3 min-h-11 rounded-lg border px-3" /></label><Button variant="outline" onClick={() => setSelectedMonth(localMonth())}>回到本月</Button></div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat title="工地狀態" value={p.status} desc="目前工程狀態" icon={Building2} />

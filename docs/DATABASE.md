@@ -678,6 +678,23 @@
 
 ## 前端接 API 時的建議順序
 
+### Apple 行事曆單向訂閱（eztodo_26091002）
+
+首頁行事曆及工地總覽皆提供「Apple 行事曆」入口。每位使用者、每個工地獨立設定，預設停用；受邀成員只需具備工地閱覽權限。啟用不會自動連接 Apple，須由使用者點選「加入 Apple 行事曆」或貼上訂閱網址。
+
+- `calendar_subscriptions`：`id`、`user_id`、`project_id`、`nonce`、`created_at`；`(user_id, project_id)` 唯一，帳號或工地刪除時 cascade 清除。由 `ensureSchema()` 非破壞性建立。
+- `GET /api/calendar/subscriptions?projectId=...`：登入後取得自己的訂閱狀態。
+- `POST /api/calendar/subscriptions`：JSON `{projectId, action, consent}`；action 為 `enable`、`rotate`、`disable`。啟用與換發須明確 `consent: true`；重複啟用不換發。
+- `GET /api/calendar/feed?token=...`：Apple 使用的私密 ICS 網址，不需登入 cookie；每次重新確認帳號及工地閱覽權限。無效、已停用或無權限皆回 404。支援 HEAD，不接受寫入。
+- Token 使用既有 `AUTH_SECRET` 做 HMAC，綁定訂閱、帳號、工地及隨機 nonce。DB 不儲存完整 bearer token。換發、停用即撤銷舊網址；更換 `AUTH_SECRET` 會使所有舊訂閱網址失效。
+- 沿用 `APP_ORIGIN` 作為行程回到 EZtoDO 的連結網域，未設定則採 API 請求網域。正式部署應設定為正式 HTTPS 網址，無需新增 Apple 金鑰或 iCloud 密碼。
+- 僅輸出待辦、Memo、預定進度、會議的標題、日期、狀態及工地連結，不輸出附件、備註、請款或人員名冊。有時間的紀錄由台灣時間轉為 UTC，無結束時間以 1 小時呈現；全天/跨日項目的 ICS 結束日期採排他日期。
+- 網址為 bearer credential，持有者可讀取該範圍行程，介面須保留分享告知。勿將完整網址放入分析追蹤、公開紀錄或支援截圖；平台存取記錄應遮蔽 `token` query 參數。
+- Apple 依自身重新整理週期更新，非即時推播，也不會回寫 EZtoDO。停用不能抹除已下載內容，使用者需在 Apple 取消訂閱。移除權限後停止提供資料；若日後恢復權限，尚未停用的連結可恢復使用。
+- Mac 訂閱時選 iCloud 可跨同帳號裝置使用；每個訂閱顏色可在 Apple 自行調整。參考 [Apple 訂閱行事曆說明](https://support.apple.com/zh-tw/guide/calendar/icl1022/mac)。
+
+### 原始整合順序
+
 1. 帳號註冊/登入：把本機預覽模式關閉，讓 `/api/auth/me` 成為進入系統的依據。
 2. 工地主檔：`ProjectSelect` 改為完全讀寫 `/api/projects`。
 3. 單一模組先接：建議先接 `defects`，因為欄位最明確。

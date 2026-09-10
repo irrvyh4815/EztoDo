@@ -366,6 +366,14 @@ async function initializeSchema() {
   await query("alter table projects add column if not exists created_by text references users(id) on delete set null");
   await query("alter table projects add column if not exists attachments jsonb not null default '[]'::jsonb");
   await query("alter table projects add column if not exists calendar_color text not null default ''");
+  await query(`create table if not exists calendar_subscriptions (
+    id text primary key,
+    user_id text not null references users(id) on delete cascade,
+    project_id text not null references projects(id) on delete cascade,
+    nonce text not null,
+    created_at timestamptz not null default now(),
+    unique(user_id, project_id)
+  )`);
 
   await query(`
     create table if not exists project_members (
