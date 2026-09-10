@@ -1,5 +1,5 @@
-import { ensureSchema, query } from "../_lib/db.js";
-import { renderCalendarFeed, validCalendarToken } from "../_lib/calendar-feed.js";
+import { ensureSchema, query } from "./db.js";
+import { renderCalendarFeed, validCalendarToken } from "./calendar-feed.js";
 
 const headers = { "Cache-Control": "private, no-store, max-age=0", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow, noarchive", "X-Content-Type-Options": "nosniff" };
 const unavailable = () => new Response("Calendar subscription unavailable", { status: 404, headers });

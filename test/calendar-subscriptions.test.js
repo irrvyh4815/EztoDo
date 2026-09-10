@@ -1,8 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import subscriptions from "../api/calendar/subscriptions.js";
-import feed from "../api/calendar/feed.js";
+import subscriptions from "../api/auth/[action].js";
+import feed from "../api/auth/[action].js";
 import { createSessionToken } from "../api/_lib/auth.js";
+import { readdirSync, readFileSync } from "node:fs";
+
+test("calendar rewrites share the existing function without breaking auth routes or the deployment limit", async () => {
+  const routes = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url))).rewrites;
+  for (const route of routes) {
+    const response = await subscriptions.fetch(new Request(`https://local.test${route.destination}`, { method: "DELETE" }));
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get("Allow"), route.source.endsWith("feed") ? "GET, HEAD" : "GET, POST");
+  }
+  assert.equal((await subscriptions.fetch(new Request("https://local.test/api/auth/login"))).status, 405);
+  assert.equal((await subscriptions.fetch(new Request("https://local.test/api/auth/me"))).status, 401);
+  assert.equal((await subscriptions.fetch(new Request("https://local.test/api/auth/unknown"))).status, 404);
+  const files = readdirSync(new URL("../api/", import.meta.url), { recursive: true });
+  assert.ok(files.filter(file => file.endsWith(".js") && !file.startsWith("_lib/")).length <= 12);
+});
 
 test("subscriptions default off, isolate users/projects, require consent and revoke on disable/rotation/access loss", async () => {
   const old = { pool: globalThis.__eztodoPool, schema: globalThis.__eztodoSchemaPromise, database: process.env.DATABASE_URL, secret: process.env.AUTH_SECRET };

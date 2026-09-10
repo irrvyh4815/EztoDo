@@ -2,6 +2,10 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/calendar/feed", "destination": "/api/auth/calendar-feed" },
+    { "source": "/api/calendar/subscriptions", "destination": "/api/auth/calendar-subscriptions" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -34,4 +38,3 @@
     }
   ]
 }
-

@@ -686,6 +686,7 @@
 - `GET /api/calendar/subscriptions?projectId=...`：登入後取得自己的訂閱狀態。
 - `POST /api/calendar/subscriptions`：JSON `{projectId, action, consent}`；action 為 `enable`、`rotate`、`disable`。啟用與換發須明確 `consent: true`；重複啟用不換發。
 - `GET /api/calendar/feed?token=...`：Apple 使用的私密 ICS 網址，不需登入 cookie；每次重新確認帳號及工地閱覽權限。無效、已停用或無權限皆回 404。支援 HEAD，不接受寫入。
+- Vercel 部署透過 `vercel.json` 將這兩條網址 rewrite 到既有 `api/auth/[action].js`，實作保留在 `_lib/calendar-*-handler.js`，共用函式以符合 Hobby 的 12 個函式限制；不改變登入或密碼重設路徑。不要把 handler 再放回獨立 `api/calendar/*.js`，否則會超出上限。
 - Token 使用既有 `AUTH_SECRET` 做 HMAC，綁定訂閱、帳號、工地及隨機 nonce。DB 不儲存完整 bearer token。換發、停用即撤銷舊網址；更換 `AUTH_SECRET` 會使所有舊訂閱網址失效。
 - 沿用 `APP_ORIGIN` 作為行程回到 EZtoDO 的連結網域，未設定則採 API 請求網域。正式部署應設定為正式 HTTPS 網址，無需新增 Apple 金鑰或 iCloud 密碼。
 - 僅輸出待辦、Memo、預定進度、會議的標題、日期、狀態及工地連結，不輸出附件、備註、請款或人員名冊。有時間的紀錄由台灣時間轉為 UTC，無結束時間以 1 小時呈現；全天/跨日項目的 ICS 結束日期採排他日期。

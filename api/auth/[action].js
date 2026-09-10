@@ -39,6 +39,9 @@ import {
   sessionCookie,
 } from "../_lib/http.js";
 
+import calendarFeed from "../_lib/calendar-feed-handler.js";
+import calendarSubscriptions from "../_lib/calendar-subscriptions-handler.js";
+
 const organizationOptions = new Set(["測試分組1", "測試分組2", "測試分組3"]);
 
 function normalizeOrganizationName(value) {
@@ -391,6 +394,11 @@ async function verifyEmail(request) {
 
 export default {
   async fetch(request) {
+    // Calendar routes share this function to stay within the Hobby function count.
+    // Match both original and rewritten paths; each handler enforces its own access.
+    const pathname = new URL(request.url).pathname.replace(/\/$/, "");
+    if (["/api/calendar/feed", "/api/auth/calendar-feed"].includes(pathname)) return calendarFeed.fetch(request);
+    if (["/api/calendar/subscriptions", "/api/auth/calendar-subscriptions"].includes(pathname)) return calendarSubscriptions.fetch(request);
     try {
       const action = actionFromUrl(request.url);
 

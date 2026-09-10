@@ -1,8 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { ensureSchema, query } from "../_lib/db.js";
-import { requireProjectAccess } from "../_lib/permissions.js";
-import { calendarToken } from "../_lib/calendar-feed.js";
-import { ApiError, json, jsonError, methodNotAllowed, readJson } from "../_lib/http.js";
+import { ensureSchema, query } from "./db.js";
+import { requireProjectAccess } from "./permissions.js";
+import { calendarToken } from "./calendar-feed.js";
+import { ApiError, json, jsonError, methodNotAllowed, readJson } from "./http.js";
 
 export default {
   async fetch(request) {
