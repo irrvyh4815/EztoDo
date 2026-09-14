@@ -4,6 +4,7 @@ import Personnel from "./Personnel.jsx";
 import CalendarSubscriptionSettings from "./CalendarSubscriptionSettings.jsx";
 import MeetingTextEditor from "./MeetingTextEditor.jsx";
 import CommonSettings from "./CommonSettings.jsx";
+import { DailyField, DailySection } from "./DailyFormParts.jsx";
 import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
 import { draftKey, readBrowserDraft, persistentAttachment, localMonth, needsRecords, workspaceHash, parseWorkspaceHash } from "./workspaceUX.js";
 import { createRecordCache } from "./recordCache.js";
@@ -142,7 +143,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26091401";
+const APP_VERSION = "eztodo_26091402";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -2824,6 +2825,7 @@ const otherOptionValue = "__other__";
 const otherOptionLabel = "其他";
 
 function CustomSelect({
+  id,
   value = "",
   onChange,
   options = [],
@@ -2845,6 +2847,7 @@ function CustomSelect({
   return (
     <div className={className}>
       <select
+        id={id}
         value={selectValue}
         onChange={(event) => {
           const next = event.target.value;
@@ -2896,6 +2899,7 @@ function SelectGroup({ value, onChange, type, placeholder }) {
 const quickAddOptionValue = "__quick_add_common_setting__";
 
 function CommonSettingSelect({
+  id,
   value,
   items,
   placeholder,
@@ -2940,6 +2944,7 @@ function CommonSettingSelect({
   return (
     <div className="min-w-0 space-y-2">
       <select
+        id={id}
         value={value || ""}
         onChange={(event) => {
           if (event.target.value === quickAddOptionValue) {
@@ -3019,7 +3024,7 @@ function CommonSettingSelect({
   );
 }
 
-function Input({ value, onChange, ph = "", type = "text", ro = false }) {
+function Input({ id, value, onChange, ph = "", type = "text", ro = false }) {
   const controlledProps =
     onChange || ro
       ? {
@@ -3031,6 +3036,7 @@ function Input({ value, onChange, ph = "", type = "text", ro = false }) {
 
   return (
     <input
+      id={id}
       type={type}
       placeholder={ph}
       className={`w-full rounded-xl border px-3 py-2 outline-none ${
@@ -6465,7 +6471,7 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
   }
 
   return (
-    <div>
+    <div className="daily-page">
       <Header
         title="施工日報紀錄"
         sub={`目前工地：${p.name}`}
@@ -6480,10 +6486,21 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
       {adding ? (
         <div ref={dailyFormRef} className="scroll-mt-20 lg:scroll-mt-4">
         <p role="status" className="mb-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">{restoredMessage ? "已還原上次未儲存的日報草稿。" : "文字草稿自動暫存於此瀏覽器，不會自動送出。"} 未上傳照片離開後需重新選取。{restoredMessage && restored?.missingFiles ? ` 上次有 ${restored.missingFiles} 個檔案需重新選取。` : ""}</p>
-        <Card className="mb-4">
+        <Card className="daily-form-shell mb-4">
           <fieldset disabled={savingDaily} className="min-w-0">
-          <CardContent className="grid gap-4 p-5 md:grid-cols-2">
-          <div className="md:col-span-2 rounded-2xl border bg-white p-4">
+          <CardContent className="daily-form grid p-5 md:grid-cols-2">
+          <div className="md:col-span-2"><h2 className="text-lg font-bold text-slate-800">{editingId ? "編輯施工日報" : "填寫今日施工日報"}</h2><p className="mb-3 mt-1 text-sm text-slate-600">先填基本資料，再依現場狀況新增紀錄；不需要的空白列可略過。</p><nav className="daily-jump" aria-label="日報填寫區塊">{[["basic","01 基本資料"],["work","02 施工工班"],["materials","03 材料"],["equipment","04 機具"],["photos","05 照片"],["notes","06 備註"]].map(([key,label])=><button key={key} type="button" onClick={()=>{const section=dailyFormRef.current?.querySelector(`[data-daily-section="${key}"]`);section?.scrollIntoView({block:"start"});section?.querySelector("input,select,textarea,button")?.focus({preventScroll:true});}}>{label}</button>)}</nav></div>
+          <DailySection title="基本資料" subtitle="確認日期、工地與當天天氣" code="01" sectionKey="basic">
+            <div className="grid gap-4 md:grid-cols-2">
+              <DailyField label="日報日期"><Input type="date" value={reportDate} onChange={setReportDate} /></DailyField>
+              <DailyField label="工地名稱"><Input value={p.name} ro /></DailyField>
+              <DailyField label="當天天氣"><CustomSelect value={dayWeather} onChange={setDayWeather} options={weather} placeholder="請選擇天氣" className="space-y-2" otherPlaceholder="請輸入自訂天氣" /></DailyField>
+              <DailyField label="天氣補充說明"><Input value={weatherNote} onChange={setWeatherNote} ph="例如：午後陣雨，外牆作業暫停" /></DailyField>
+            </div>
+          </DailySection>
+          <details className="daily-import md:col-span-2">
+            <summary>有紙本日報？展開上傳 / AI 判讀（選用）</summary>
+            <div>
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -6573,20 +6590,13 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
                 </ul>
               </div>
             ) : null}
-          </div>
-          <Input type="date" value={reportDate} onChange={setReportDate} />
-          <Input value={p.name} ro />
-          <CustomSelect
-            value={dayWeather}
-            onChange={setDayWeather}
-            options={weather}
-            placeholder="請選擇天氣"
-            className="space-y-2"
-            otherPlaceholder="請輸入自訂天氣"
-          />
-          <Input value={weatherNote} onChange={setWeatherNote} ph="天氣備註" />
+            </div>
+          </details>
           <Rows
-            title="施工工班 / 人數 / 內容"
+            title="施工工班紀錄"
+            tone="work" code="02" sectionKey="work" rowName="工班"
+            subtitle="誰來施工、出工幾人、今天完成什麼"
+            fields={[{label:"施工工班"},{label:"出工人數（人）"},{label:"今日施工內容",wide:true},{label:"工班備註",wide:true}]}
             list={work}
             add={() => add(setWork, empty.work)}
             insertAfter={(id) => addAfter(setWork, id, empty.work)}
@@ -6620,17 +6630,21 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
                   onChange={(value) => upd(setWork, x.id, "workers", value)}
                   ph="人數"
                 />
-                <Input
+                <textarea
                   value={x.description}
-                  onChange={(value) => upd(setWork, x.id, "description", value)}
-                  ph="今日施工項目"
+                  onChange={(event) => upd(setWork, x.id, "description", event.target.value)}
+                  rows={3}
+                  placeholder="例如：3F 梁柱鋼筋綁紮、完成東側區域檢查"
                 />
                 <Input value={x.note} onChange={(value) => upd(setWork, x.id, "note", value)} ph="備註" />
               </>
             )}
           />
           <Rows
-            title="材料使用 / 進場"
+            title="材料進場 / 使用紀錄"
+            tone="materials" code="03" sectionKey="materials" rowName="材料"
+            subtitle="記錄材料名稱、規格、數量與計量單位"
+            fields={[{label:"材料名稱"},{label:"材料規格"},{label:"數量"},{label:"計量單位"},{label:"材料備註",wide:true}]}
             list={mat}
             add={() => add(setMat, empty.mat)}
             insertAfter={(id) => addAfter(setMat, id, empty.mat)}
@@ -6672,7 +6686,10 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
             )}
           />
           <Rows
-            title="機具使用"
+            title="機具設備紀錄"
+            tone="equipment" code="04" sectionKey="equipment" rowName="機具"
+            subtitle="記錄現場使用的設備與數量"
+            fields={[{label:"機具設備"},{label:"設備規格"},{label:"使用數量"},{label:"計量單位"},{label:"機具備註",wide:true}]}
             list={eq}
             add={() => add(setEq, empty.eq)}
             insertAfter={(id) => addAfter(setEq, id, empty.eq)}
@@ -6718,6 +6735,7 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
               </>
             )}
           />
+          <DailySection title="現場照片" subtitle="附上照片，讓日報更容易查核" code="05" sectionKey="photos">
           <ImageAttachments
             className="md:col-span-2"
             title="現場施工照"
@@ -6728,15 +6746,17 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
             value={sitePhotos}
             onChange={setSitePhotos}
           />
-          <label className="md:col-span-2">
-            <span className="text-sm font-medium">其他備註 / 記事</span>
+          </DailySection>
+          <DailySection title="其他備註 / 記事" subtitle="特殊狀況、協調事項或需要交接的訊息" code="06" tone="notes" sectionKey="notes">
+          <DailyField label="今日補充記事">
             <textarea
               value={dailyNote}
               onChange={(event) => setDailyNote(event.target.value)}
               className="mt-2 min-h-28 w-full rounded-xl border px-3 py-2 outline-none"
               placeholder="可記錄今日特殊狀況、協調事項、業主指示、停工原因或其他補充記事"
             />
-          </label>
+          </DailyField>
+          </DailySection>
           <ActionBar className="sticky bottom-20 z-20 rounded-xl border bg-white/95 p-3 shadow-md backdrop-blur md:col-span-2 lg:bottom-4">
             <Button
               type="button"
@@ -6759,7 +6779,7 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
         </Card>
         </div>
       ) : null}
-      <Card>
+      <Card className="daily-history">
         <CardContent className="p-4">
           <div className="flex flex-col gap-4">
             <div>
@@ -6914,7 +6934,7 @@ function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
 
 function DailyReportDetails({ report }) {
   return (
-    <div className="mt-4 grid gap-4 border-t pt-4">
+    <div className="daily-details mt-4 grid gap-4 border-t border-slate-200 pt-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl bg-slate-50 p-3">
           <p className="text-xs text-slate-500">日期</p>
@@ -6935,6 +6955,7 @@ function DailyReportDetails({ report }) {
       </div>
       <DailyReportTable
         title="施工工班"
+        tone="work"
         rows={report.work || []}
         columns={[
           ["trade", "工班"],
@@ -6945,6 +6966,7 @@ function DailyReportDetails({ report }) {
       />
       <DailyReportTable
         title="材料使用 / 進場"
+        tone="materials"
         rows={report.materials || []}
         columns={[
           ["name", "材料"],
@@ -6956,6 +6978,7 @@ function DailyReportDetails({ report }) {
       />
       <DailyReportTable
         title="機具使用"
+        tone="equipment"
         rows={report.equipment || []}
         columns={[
           ["name", "機具"],
@@ -6989,10 +7012,10 @@ function DailyReportDetails({ report }) {
   );
 }
 
-function DailyReportTable({ title, rows = [], columns = [] }) {
+function DailyReportTable({ title, rows = [], columns = [], tone }) {
   return (
-    <div className="overflow-hidden rounded-2xl border">
-      <div className="border-b bg-slate-50 px-4 py-3">
+    <div className={`overflow-hidden rounded-2xl border ${tone ? "daily-section" : ""}`} data-tone={tone}>
+      <div className={tone ? "daily-section-heading" : "border-b bg-slate-50 px-4 py-3"}>
         <h4 className="font-bold">{title}</h4>
       </div>
       {rows.length ? (
@@ -7619,35 +7642,38 @@ function MeetingRecordDetails({ record }) {
   );
 }
 
-function Rows({ title, list, add, insertAfter, del: remove, render }) {
+function Rows({ title, subtitle, tone, code, sectionKey, rowName, fields = [], list, add, insertAfter, del: remove, render }) {
   return (
-    <div className="rounded-2xl border p-4 md:col-span-2">
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h3 className="font-bold">{title}</h3>
-        <Button type="button" variant="outline" onClick={add}>
+    <section className="daily-section md:col-span-2" data-tone={tone} data-daily-section={sectionKey} aria-label={title}>
+      <div className="daily-section-heading">
+        <span className="daily-section-code" aria-hidden="true">{code}</span>
+        <div><h3>{title}</h3><p>{subtitle} · {list.length} 列</p></div>
+        <Button type="button" variant="outline" className="daily-add-top" onClick={add}>
           <Plus className="mr-2 h-4 w-4" />
-          新增
+          新增{rowName}
         </Button>
       </div>
-      <div className="space-y-3">
+      <div className="daily-section-body">
         {list.map((x, i) => (
-          <div key={x.id} className="rounded-2xl bg-slate-50 p-4">
-            <div className="mb-3 flex justify-between">
-              <b>紀錄 {i + 1}</b>
+          <div key={x.id} className="daily-row">
+            <div className="daily-row-header">
+              <span className="daily-row-number">{rowName} {String(i+1).padStart(2,"0")}</span>
               <Button
                 type="button"
                 onClick={() => remove(x.id, i)}
-                variant="danger"
+                variant="dangerGhost"
                 size="sm"
+                disabled={list.length===1}
+                aria-label={`刪除${rowName}紀錄 ${i+1}`}
               >
                 刪除
               </Button>
             </div>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{render(x)}</div>
+            <div className="grid gap-4 md:grid-cols-2">{React.Children.map(render(x).props.children, (child,index) => <DailyField label={fields[index]?.label || "欄位"} wide={fields[index]?.wide}>{child}</DailyField>)}</div>
             <Button
               type="button"
               variant="outline"
-              className="mt-3 w-full border-dashed"
+              className="daily-add-after"
               onClick={() => insertAfter(x.id)}
             >
               <Plus className="mr-2 h-4 w-4" />
@@ -7656,7 +7682,7 @@ function Rows({ title, list, add, insertAfter, del: remove, render }) {
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 

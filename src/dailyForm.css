@@ -1,0 +1,48 @@
+.daily-page { background: #edf2f3; border-radius: 24px; padding: 16px; }
+.daily-page .daily-form-shell { border-color: #dce4e8; background: #f6f8fa; box-shadow: none; }
+.daily-form { gap: 24px; }
+.daily-section { --daily-tint: #eaf0f7; --daily-accent: #425c79; --daily-edge: #cbd8e5; min-width: 0; border: 1px solid var(--daily-edge); border-radius: 20px; background: var(--daily-tint); scroll-margin-top: 90px; overflow: clip; }
+.daily-section[data-tone="work"] { --daily-tint: #eaf2ff; --daily-accent: #24569a; --daily-edge: #c7d9f2; }
+.daily-section[data-tone="materials"] { --daily-tint: #e9f5ee; --daily-accent: #246549; --daily-edge: #c4dece; }
+.daily-section[data-tone="equipment"] { --daily-tint: #fff4df; --daily-accent: #805517; --daily-edge: #ead6ad; }
+.daily-section[data-tone="notes"] { --daily-tint: #f1edfa; --daily-accent: #664c8c; --daily-edge: #dbd0ed; }
+.daily-section-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 18px 20px; color: var(--daily-accent); }
+.daily-section-heading > div { flex: 1; min-width: 0; }
+.daily-section-heading h3 { font-size: 17px; font-weight: 750; line-height: 1.5; }
+.daily-section-heading p { font-size: 13px; margin-top: 3px; line-height: 1.6; }
+.daily-section-code { display: inline-grid; place-items: center; width: 38px; height: 38px; flex: none; border-radius: 12px; background: var(--daily-accent); color: white; font-size: 13px; font-weight: 700; }
+.daily-section-heading .daily-add-top { margin-left: auto; color: var(--daily-accent); border-color: var(--daily-edge); }
+.daily-section-body { padding: 0 16px 16px; }
+.daily-row { min-width: 0; border-radius: 16px; padding: 18px; background: #fff; box-shadow: 0 2px 7px #20304408; border: 1px solid #ffffffb3; }
+.daily-row + .daily-row { margin-top: 16px; }
+.daily-row-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; gap: 12px; }
+.daily-row-number { color: var(--daily-accent); background: var(--daily-tint); border-radius: 8px; padding: 5px 10px; font-weight: 700; font-size: 13px; }
+.daily-field { min-width: 0; }
+.daily-field > label { display: block; margin-bottom: 8px; color: #334155; font-size: 14px; font-weight: 650; }
+.daily-form input:not([type="checkbox"]):not([type="file"]), .daily-form select, .daily-form textarea { min-height: 46px; width: 100%; min-width: 0; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; color: #172b42; padding: 11px 12px; font-size: 16px; line-height: 1.55; transition: border-color .15s, box-shadow .15s; }
+.daily-form input[readonly] { background: #e5ebf0 !important; color: #475569 !important; }
+.daily-form input::placeholder, .daily-form textarea::placeholder { color: #64748b; }
+.daily-form input:focus, .daily-form select:focus, .daily-form textarea:focus { outline: none; background: white; border-color: #3b6ea8; box-shadow: 0 0 0 3px #3b82f620; }
+.daily-form textarea { display: block; min-height: 100px; resize: vertical; }
+.daily-form :disabled { cursor: not-allowed; opacity: .6; }
+.daily-row .daily-add-after { margin-top: 18px; width: 100%; background: var(--daily-tint); border: 1px dashed var(--daily-edge); color: var(--daily-accent); }
+.daily-jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.daily-jump button { min-height: 44px; padding: 8px 12px; border: 1px solid #ced9e1; background: white; color: #334155; border-radius: 10px; font-size: 14px; }
+.daily-jump button:hover, .daily-jump button:focus-visible { background: #e2ebf6; outline: 2px solid #779bc5; outline-offset: 1px; }
+.daily-import { border: 1px dashed #c4d0db; border-radius: 16px; background: #edf1f5; padding: 16px; }
+.daily-import > summary { cursor: pointer; color: #475569; font-size: 14px; font-weight: 650; min-height: 28px; }
+.daily-import > div { padding-top: 16px; }
+.daily-page .daily-history { border-color: #d8e1e6; background: #f8fafc; }
+.daily-page .daily-details table th { background: var(--daily-tint, #eaf0f7); color: var(--daily-accent, #425c79); }
+.daily-page .daily-details table td { white-space: pre-wrap; line-height: 1.7; border-color: #e2e8f0; }
+.daily-page .daily-details table tbody tr:nth-child(even) { background: #f1f5f9; }
+.daily-page .daily-details table tbody tr { border-color: #e2e8f0; }
+@media (max-width: 639px) {
+  .daily-page { padding: 10px; border-radius: 16px; }
+  .daily-form { padding: 10px; gap: 18px; }
+  .daily-section-heading { padding: 14px 12px; gap: 9px; }
+  .daily-section-heading h3 { font-size: 16px; }
+  .daily-section-body { padding: 0 10px 10px; }
+  .daily-row { padding: 12px; }
+  .daily-section-heading .daily-add-top { width: 100%; }
+}
