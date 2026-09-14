@@ -2,7 +2,7 @@ import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "reac
 import { Maximize2, Minimize2 } from "lucide-react";
 import { resizeMeetingTextarea } from "./meetingEditor.js";
 
-export default function MeetingTextEditor({ label, value = "", onChange, placeholder, minHeight = 160, disabled = false, className = "" }) {
+export default function MeetingTextEditor({ label, value = "", onChange, placeholder, minHeight = 160, disabled = false, className = "", recordLabel = "會議紀錄" }) {
   const id = useId();
   const inline = useRef(null);
   const dialog = useRef(null);
@@ -57,7 +57,7 @@ export default function MeetingTextEditor({ label, value = "", onChange, placeho
     <dialog ref={dialog} aria-labelledby={`${id}-title`} onCancel={event => { event.preventDefault(); closeEditor(); }} className="m-auto h-[94dvh] max-h-none w-[calc(100%-1rem)] max-w-5xl overflow-hidden rounded-2xl border bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/50">
       <div className="flex h-full min-h-0 flex-col">
         <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-3 sm:px-6">
-          <div><h2 id={`${id}-title`} className="font-bold">{label} · 放大編輯</h2><p id={`${id}-help`} className="mt-1 text-xs leading-5 text-slate-500">文字同步回表單，返回後請記得儲存會議紀錄。</p></div>
+          <div><h2 id={`${id}-title`} className="font-bold">{label} · 放大編輯</h2><p id={`${id}-help`} className="mt-1 text-xs leading-5 text-slate-500">文字同步回表單，返回後請記得儲存{recordLabel}。</p></div>
           <button type="button" onClick={closeEditor} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-900 px-3 text-sm text-white"><Minimize2 className="h-4 w-4" />返回表單</button>
         </header>
         <textarea ref={expandedInput} aria-label={`${label}（放大編輯）`} aria-describedby={`${id}-help`} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} className="min-h-0 w-full flex-1 resize-none overflow-y-auto bg-white px-4 py-4 text-base leading-8 text-slate-900 outline-none focus:shadow-[inset_0_0_0_2px_#93c5fd] sm:px-6" />

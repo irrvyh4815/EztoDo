@@ -37,7 +37,7 @@ test("subscriptions carry one display alarm at scheduled Taiwan time or 09:00 on
   for (const event of ics.split("BEGIN:VEVENT").slice(1)) {
     if (/UID:(past|done|cancel)@/.test(event)) assert.doesNotMatch(event, /VALARM/);
   }
-  assert.match(ics, /LAST-MODIFIED:20260914T000000Z/);
+  assert.match(ics, /LAST-MODIFIED:20260914T010000Z/);
 });
 
 test("ICS handles Taiwan time, exclusive all-day ends, leap days and reversed ranges", () => {

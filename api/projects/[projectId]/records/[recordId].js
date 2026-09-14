@@ -13,6 +13,7 @@ import {
 } from "../../../_lib/http.js";
 import { requireProjectAccess, requireProjectModuleAccess } from "../../../_lib/permissions.js";
 import { normalizePersonnel } from "../../../../shared/personnel.js";
+import { normalizeTimedTask } from "../../../../shared/taskTiming.js";
 
 function idsFromUrl(url) {
   const parts = new URL(url).pathname.split("/").filter(Boolean);
@@ -50,6 +51,11 @@ export default {
         const body = await readJson(request);
         if (!body.title?.trim()) {
           throw new ApiError(400, "請輸入紀錄標題", "RECORD_TITLE_REQUIRED");
+        }
+        if (["memos", "todos"].includes(existingRecord.module) && body.payload?.timingVersion === 1) {
+          try { body.payload = normalizeTimedTask(body.payload, existingRecord.module); }
+          catch (error) { throw new ApiError(400, error.message, "INVALID_TASK_TIMING"); }
+          body.title = body.payload.title;
         }
         if (existingRecord.module === "personnel") {
           try { body.payload = normalizePersonnel(body.payload); }

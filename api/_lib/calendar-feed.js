@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { taskRange, taskReminderAt, taiwanMoment } from "../../shared/taskTiming.js";
 
 export function calendarToken(row) {
   if (!process.env.AUTH_SECRET) throw new Error("Calendar subscriptions require AUTH_SECRET");
@@ -15,7 +16,7 @@ export function validCalendarToken(token, row) {
 }
 
 const modules = { todos: "待辦", memos: "Memo", schedule: "預定進度", meetings: "會議" };
-const feedRevision = new Date("2026-09-14T00:00:00Z");
+const feedRevision = new Date("2026-09-14T01:00:00Z");
 const escapeText = value => String(value || "").replace(/\\/g, "\\\\").replace(/\r\n|\r|\n/g, "\\n").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 export function foldCalendarLine(line) {
   const lines = []; let current = "", bytes = 0;
@@ -45,8 +46,9 @@ export function renderCalendarFeed(project, records, origin, now = new Date()) {
   for (const record of records) {
     if (!modules[record.module] || record.project_id !== project.project_id) continue;
     const item = record.payload || {};
-    let start = dateKey(record.module === "schedule" ? item.startDate || item.endDate : item.date);
-    let end = record.module === "schedule" ? dateKey(item.endDate || item.startDate) : start;
+    const range = taskRange(item, record.module);
+    let start = dateKey(range?.start);
+    let end = dateKey(range?.end);
     if (!start || !end) continue;
     if (start > end) [start, end] = [end, start];
     const uid = `${record.id}@eztodo-project-calendar`;
@@ -55,13 +57,14 @@ export function renderCalendarFeed(project, records, origin, now = new Date()) {
     const updated = record.updated_at || record.created_at;
     const modified = stamp(Math.max(feedRevision.getTime(), updated && Number.isFinite(new Date(updated).getTime()) ? new Date(updated).getTime() : now.getTime()));
     lines.push("BEGIN:VEVENT", `UID:${escapeText(uid)}`, `DTSTAMP:${modified}`, `LAST-MODIFIED:${modified}`);
-    const time = String(item.time || item.reminderTime || item.dueTime || "");
+    const time = String(range.time || item.reminderTime || item.dueTime || "");
     let alarmAt = new Date(`${start}T09:00:00+08:00`);
     if (record.module !== "schedule" && /^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
       // Project times are Taiwan wall-clock times, represented as UTC for every Apple device.
       const begin = new Date(`${start}T${time}:00+08:00`);
       alarmAt = begin;
-      lines.push(`DTSTART:${stamp(begin)}`, `DTEND:${stamp(new Date(begin.getTime() + 60 * 60 * 1000))}`);
+      const finish = record.module === "memos" && range.endTime ? taiwanMoment(end, range.endTime) : null;
+      lines.push(`DTSTART:${stamp(begin)}`, `DTEND:${stamp(finish && finish > begin ? finish : new Date(begin.getTime() + 60 * 60 * 1000))}`);
     } else lines.push(`DTSTART;VALUE=DATE:${start.replace(/-/g, "")}`, `DTEND;VALUE=DATE:${nextDay(end)}`);
     const status = item.status || record.status || "";
     lines.push(`SUMMARY:${escapeText(`[${project.name}] ${item.title || item.name || record.title || "未命名行程"}`)}`,
@@ -70,7 +73,8 @@ export function renderCalendarFeed(project, records, origin, now = new Date()) {
       `URL:${origin}/#project=${encodeURIComponent(project.project_id)}&module=${encodeURIComponent(record.module)}`,
       "TRANSP:TRANSPARENT", "CLASS:PRIVATE");
     const finished = ["已完成", "完成", "已取消", "取消", "completed", "done", "cancelled", "canceled"].includes(String(status).trim().toLowerCase());
-    if (!finished && alarmAt.getTime() >= now.getTime()) {
+    if (item.timingVersion === 1) alarmAt = taskReminderAt(item);
+    if (!finished && alarmAt && alarmAt.getTime() >= now.getTime()) {
       lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER;VALUE=DATE-TIME:${stamp(alarmAt)}`,
         `DESCRIPTION:${escapeText(`[${project.name}] ${item.title || item.name || record.title || "行程提醒"}`)}`, "END:VALARM");
     }

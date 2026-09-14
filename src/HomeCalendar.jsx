@@ -54,7 +54,7 @@ export default function HomeCalendar({ projects, records, onNavigate, onColorCha
           {event.project.name} · {calendarModules[event.module]}
         </span>
         {!compact && <span className="mt-1 block break-words text-xs text-slate-500">
-          {event.module === "schedule" ? `${event.start} ～ ${event.end} · ` : ""}{event.status}{event.detail ? ` · ${event.detail}` : ""}
+          {["schedule", "memos"].includes(event.module) ? `${event.start} ～ ${event.end}${event.endTime ? ` ${event.endTime}` : ""} · ` : ""}{event.status}{event.detail ? ` · ${event.detail}` : ""}
         </span>}
       </button>
     );

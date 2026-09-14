@@ -1,3 +1,4 @@
+import { taskBaseAt, taskReminderAt } from "../shared/taskTiming.js";
 export const NOTIFICATION_GRACE_HOURS = 2;
 
 function localDateTime(dateValue, timeValue = "23:59") {
@@ -25,6 +26,8 @@ function localDateTime(dateValue, timeValue = "23:59") {
 }
 
 export function notificationScheduledAt(item = {}) {
+  if (item.noDeadline === true) return null;
+  if (item.timingVersion === 1) return taskBaseAt(item);
   return localDateTime(
     item.date,
     item.time || item.reminderTime || item.dueTime || "23:59",
@@ -44,6 +47,10 @@ export function shouldShowTimedNotification(
   const scheduledAt = notificationScheduledAt(item);
   const current = new Date(now);
   if (!scheduledAt || Number.isNaN(current.getTime())) return false;
+  if (item.timingVersion === 1) {
+    const reminderAt = taskReminderAt(item);
+    return Boolean(reminderAt && current >= reminderAt && current.getTime() <= scheduledAt.getTime() + NOTIFICATION_GRACE_HOURS * 3600000);
+  }
 
   const expiresAt =
     scheduledAt.getTime() + NOTIFICATION_GRACE_HOURS * 60 * 60 * 1000;

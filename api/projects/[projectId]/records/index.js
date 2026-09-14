@@ -12,6 +12,7 @@ import {
 } from "../../../_lib/http.js";
 import { requireProjectAccess, requireProjectModuleAccess } from "../../../_lib/permissions.js";
 import { normalizePersonnel } from "../../../../shared/personnel.js";
+import { normalizeTimedTask } from "../../../../shared/taskTiming.js";
 
 function projectIdFromUrl(url) {
   const parts = new URL(url).pathname.split("/").filter(Boolean);
@@ -53,6 +54,11 @@ export default {
         throw new ApiError(400, "缺少資料標題", "RECORD_TITLE_REQUIRED");
       }
       await requireProjectModuleAccess(request, projectId, body.module, "edit");
+      if (["memos", "todos"].includes(body.module) && body.payload?.timingVersion === 1) {
+        try { body.payload = normalizeTimedTask(body.payload, body.module); }
+        catch (error) { throw new ApiError(400, error.message, "INVALID_TASK_TIMING"); }
+        body.title = body.payload.title;
+      }
       if (body.module === "personnel") {
         try { body.payload = normalizePersonnel(body.payload); }
         catch (error) { throw new ApiError(400, error.message, "INVALID_PERSONNEL"); }

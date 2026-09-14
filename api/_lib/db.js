@@ -800,6 +800,8 @@ export async function listCalendarRecords(user) {
             coalesce(nullif(r.payload->>'title', ''), nullif(r.payload->>'name', ''), r.title) as title,
             coalesce(r.payload->>'status', r.status) as status, r.payload->>'date' as date, r.payload->>'time' as time,
             r.payload->>'startDate' as "startDate", r.payload->>'endDate' as "endDate",
+            r.payload->>'startTime' as "startTime", r.payload->>'endTime' as "endTime",
+            r.payload->'noDeadline' as "noDeadline",
             coalesce(r.payload->>'owner', r.payload->>'trade', r.payload->>'location', '') as detail
      from project_records r
      join projects p on p.id = r.project_id
@@ -822,6 +824,10 @@ export async function listNotificationRecords(user) {
        r.payload->>'name' as name, r.payload->>'note' as note,
        r.payload->>'date' as date, r.payload->>'time' as time,
        r.payload->>'reminderTime' as "reminderTime", r.payload->>'dueTime' as "dueTime",
+       r.payload->'timingVersion' as "timingVersion", r.payload->'reminderMinutes' as "reminderMinutes",
+       r.payload->'noDeadline' as "noDeadline",
+       r.payload->>'startDate' as "startDate", r.payload->>'endDate' as "endDate",
+       r.payload->>'startTime' as "startTime", r.payload->>'endTime' as "endTime",
        r.payload->>'due' as due, r.payload->>'location' as location,
        r.payload->>'type' as type, r.payload->>'vendor' as vendor,
        r.payload->>'owner' as owner, r.payload->>'trade' as trade,

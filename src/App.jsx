@@ -5,11 +5,13 @@ import CalendarSubscriptionSettings from "./CalendarSubscriptionSettings.jsx";
 import MeetingTextEditor from "./MeetingTextEditor.jsx";
 import CommonSettings from "./CommonSettings.jsx";
 import { DailyField, DailySection } from "./DailyFormParts.jsx";
+import TaskEditor from "./TaskEditor.jsx";
+import { createTimedTaskDraft, normalizeTimedTask, taskBaseAt, taskPeriodLabel, reminderLabel, reminderPreview } from "../shared/taskTiming.js";
 import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
 import { draftKey, readBrowserDraft, persistentAttachment, localMonth, needsRecords, workspaceHash, parseWorkspaceHash } from "./workspaceUX.js";
 import { createRecordCache } from "./recordCache.js";
 import { groupHomeProjects, isProjectCreator } from "./projectGroups.js";
-import { calendarModules, projectCalendarColor } from "./homeCalendar.js";
+import { calendarModules, projectCalendarColor, calendarEventsByDate } from "./homeCalendar.js";
 import { motion } from "framer-motion";
 import {
   activeCommonSettingItems,
@@ -143,7 +145,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26091402";
+const APP_VERSION = "eztodo_26091403";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -808,7 +810,7 @@ function buildProjectNotifications(
         type: "待辦",
         tone: past ? "danger" : "info",
         title: item.title || item.name || "近期待辦事項",
-        desc: `${item.owner || "未指定"}｜${notificationDateTimeLabel(item)}｜${item.note || "無備註"}`,
+        desc: `${item.owner || "未指定"}｜期限：${taskPeriodLabel(item, "todos")}｜${reminderLabel(item)}｜${item.note || "無備註"}`,
         date: item.date,
         module: "todos",
         ...notificationProjectMeta(item),
@@ -828,7 +830,7 @@ function buildProjectNotifications(
         type: "Memo",
         tone: past ? "warning" : "info",
         title: item.title || "近期工項 Memo",
-        desc: `${item.trade || "未分類"}｜${notificationDateTimeLabel(item)}｜${item.status || "未設定狀態"}`,
+        desc: `${item.trade || "未分類"}｜進場：${taskPeriodLabel(item, "memos")}｜${reminderLabel(item)}｜${item.status || "未設定狀態"}`,
         date: item.date,
         module: "memos",
         ...notificationProjectMeta(item),
@@ -2658,8 +2660,8 @@ function buildMemoPrintRecord(record) {
     subtitle: `${record.trade || "未分類工項"}｜${notificationDateTimeLabel(record)}`,
     status: record.status,
     fields: [
-      ["日期", record.date],
-      ["時間", record.time],
+      ["進場區間", taskPeriodLabel(record, "memos")],
+      ["提前提醒", reminderLabel(record)],
       ["工項", record.trade],
       ["標題", record.title],
       ["狀態", record.status],
@@ -2722,14 +2724,14 @@ function buildDefectPrintRecord(record) {
 function buildTodoPrintRecord(record) {
   return {
     title: record.title,
-    subtitle: `負責人：${record.owner || "未指定"}｜時間：${notificationDateTimeLabel(record)}`,
+    subtitle: `負責人：${record.owner || "未指定"}｜期限：${taskPeriodLabel(record, "todos")}`,
     status: record.status,
     fields: [
       ["待辦事項", record.title],
       ["負責人", record.owner],
-      ["日期", record.date],
-      ["時間", record.time],
-      ["優先度", record.status],
+      ["完成期限", taskPeriodLabel(record, "todos")],
+      ["提前提醒", reminderLabel(record)],
+      ["優先度 / 狀態", record.status],
     ],
     note: record.note,
     attachments: record.attachments,
@@ -3948,45 +3950,16 @@ function DashboardCalendar({ project, todos, memos: memoItems, className = "" })
   const weekDates = useMemo(() => weekDaysFrom(weekKey), [weekKey]);
   const weekDayLabels = ["日", "一", "二", "三", "四", "五", "六"];
   const eventsByDate = useMemo(() => {
-    const map = new Map();
-    const pushEvent = (date, event) => {
-      if (!date) return;
-      map.set(date, [...(map.get(date) || []), event]);
-    };
-
-    todos.forEach((todo) => {
-      pushEvent(todo.date, {
-        id: todo.id,
-        type: "todo",
-        title: todo.title,
-        meta: todo.owner || todo.status,
-        status: todo.status,
-        note: todo.note,
-        time: todo.time,
-      });
-    });
-    memoItems.forEach((memo) => {
-      pushEvent(memo.date, {
-        id: memo.id,
-        type: "memo",
-        title: memo.title,
-        meta: memo.trade || memo.status,
-        status: memo.status,
-        note: memo.note,
-        time: memo.time,
-      });
-    });
-
-    map.forEach((events, date) => {
-      map.set(
-        date,
-        [...events].sort((a, b) =>
-          String(a.time || "23:59").localeCompare(String(b.time || "23:59")),
-        ),
-      );
-    });
-    return map;
-  }, [todos, memoItems]);
+    const days = (viewMode === "month" ? monthDays : weekDates).map(day => day.date);
+    const records = [...todos.map(item => ({ ...item, projectId: project.id, module: "todos" })),
+      ...memoItems.map(item => ({ ...item, projectId: project.id, module: "memos" }))];
+    const map = calendarEventsByDate([project], records, days);
+    return new Map([...map].map(([day, events]) => [day, events.map(item => ({
+      ...item, type: item.module === "todos" ? "todo" : "memo",
+      meta: item.module === "todos" ? item.owner || item.status : item.trade || item.status,
+      note: `${taskPeriodLabel(item, item.module)}${item.note ? `｜${item.note}` : ""}`,
+    }))]));
+  }, [todos, memoItems, project, monthDays, weekDates, viewMode]);
   const title =
     viewMode === "month"
       ? monthTitle(monthKey)
@@ -5664,195 +5637,74 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
   );
 }
 
-function Memos({ p, items, onSave, onUpdate, onDelete }) {
+function Memos(props) { return <TimedTaskList {...props} module="memos" />; }
+
+function TimedTaskList({ p, items, onSave, onUpdate, onDelete, module, commonSettings }) {
+  const memo = module === "memos";
   const [adding, setAdding] = useState(false);
-  const emptyDraft = {
-    trade: "",
-    title: "",
-    date: todayKey(),
-    time: currentTimeKey(),
-    note: "",
-    status: "待處理",
-    attachments: [],
-  };
-  const [draft, setDraft] = useState(emptyDraft);
+  const [draft, setDraft] = useState(() => createTimedTaskDraft(module, {}, todayKey()));
   const [editingId, setEditingId] = useState("");
-
-  function resetDraft() {
-    setDraft({ ...emptyDraft, date: todayKey(), time: currentTimeKey() });
-    setEditingId("");
-  }
-
-  function startEditMemo(memo) {
-    setDraft({
-      ...emptyDraft,
-      ...memo,
-      date: memo.date || todayKey(),
-      time: memo.time || "",
-      attachments: memo.attachments || [],
-    });
-    setEditingId(memo.id);
-    setAdding(true);
-  }
-
-  async function saveMemo() {
-    const next = {
-      id: editingId || Date.now(),
-      projectId: p.id,
-      projectName: p.name,
-      trade: draft.trade || "未分類工項",
-      title: draft.title || "未命名 Memo",
-      date: draft.date || todayKey(),
-      time: draft.time || "",
-      note: draft.note || "未填寫內容",
-      status: draft.status,
-      attachments: draft.attachments || [],
-    };
-    if (editingId && onUpdate) {
-      await onUpdate(editingId, next, { title: next.title, status: next.status });
-    } else {
-      await onSave(next, { title: next.title, status: next.status });
-    }
-    resetDraft();
-    setAdding(false);
-  }
-
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const formRef = useRef(null);
+  const [formError, setFormError] = useState("");
   const exportControls = useRecordExport({
-    project: p,
-    title: "工項 Memo 紀錄",
-    records: items,
-    buildPrintRecord: buildMemoPrintRecord,
+    project: p, title: memo ? "工項 Memo 紀錄" : "待辦事項", records: items,
+    buildPrintRecord: memo ? buildMemoPrintRecord : buildTodoPrintRecord,
   });
-
-  return (
-    <ListPage
-      title="工項 Memo 紀錄"
-      sub={`目前工地：${p.name}`}
-      onAdd={() => {
-        resetDraft();
-        setAdding(true);
-      }}
-      items={exportControls.filteredRecords}
-      toolbar={<RecordExportToolbar controls={exportControls} placeholder="搜尋工項、標題、內容或狀態" />}
-      emptyText={items.length ? "找不到符合條件的 Memo。" : "尚無工項 Memo，請新增第一筆紀錄。"}
-      render={(x) => (
-        <Card key={x.id || x.title}>
-          <CardContent className="flex flex-col justify-between gap-4 p-5 sm:flex-row">
-            <div>
-              <div className="flex flex-wrap gap-2">
-                <Badge>{x.trade}</Badge>
-                <Badge>{x.status}</Badge>
-              </div>
-              <h3 className="mt-3 text-lg font-bold">{x.title}</h3>
-              <p className="text-sm text-slate-500">提醒：{notificationDateTimeLabel(x)}</p>
-              <p className="text-sm text-slate-500">{x.note}</p>
-              <AttachmentSummary attachments={x.attachments} />
-            </div>
-            <div className="flex flex-wrap items-start gap-2 sm:justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => exportControls.exportRecords([x], { from: recordDateKey(x), to: recordDateKey(x) })}
-              >
-                <FileDown className="mr-1 h-3.5 w-3.5" />
-                列印本筆
-              </Button>
-              <EditButton label={x.title} onClick={() => startEditMemo(x)} />
-              <Del label={x.title} onClick={() => onDelete(x.id)} />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    >
-      {adding ? (
-        <Card className="mb-4">
-          <CardContent className="grid gap-4 p-5 md:grid-cols-2">
-            <label>
-              <span className="text-sm font-medium">工項</span>
-              <div className="mt-2">
-                <Input
-                  value={draft.trade}
-                  onChange={(value) => setDraft({ ...draft, trade: value })}
-                  ph="例如：防水工程"
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">狀態</span>
-              <CustomSelect
-                value={draft.status}
-                onChange={(value) => setDraft({ ...draft, status: value })}
-                options={["待確認", "待處理", "追蹤中", "已完成"]}
-                className="mt-2 space-y-2"
-                otherPlaceholder="請輸入自訂狀態"
-              />
-            </label>
-            <label>
-              <span className="text-sm font-medium">日期</span>
-              <div className="mt-2">
-                <Input
-                  type="date"
-                  value={draft.date}
-                  onChange={(value) => setDraft({ ...draft, date: value })}
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">時間</span>
-              <div className="mt-2">
-                <Input
-                  type="time"
-                  value={draft.time}
-                  onChange={(value) => setDraft({ ...draft, time: value })}
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">標題</span>
-              <div className="mt-2">
-                <Input
-                  value={draft.title}
-                  onChange={(value) => setDraft({ ...draft, title: value })}
-                  ph="例如：浴室門檻加強"
-                />
-              </div>
-            </label>
-            <label className="md:col-span-2">
-              <span className="text-sm font-medium">內容</span>
-              <textarea
-                value={draft.note}
-                onChange={(event) => setDraft({ ...draft, note: event.target.value })}
-                className="mt-2 min-h-24 w-full rounded-xl border px-3 py-2 outline-none"
-                placeholder="記錄待確認事項、施工提醒或業主討論結果"
-              />
-            </label>
-            <ImageAttachments
-              className="md:col-span-2"
-              value={draft.attachments}
-              onChange={(attachments) => setDraft({ ...draft, attachments })}
-            />
-            <ActionBar className="md:col-span-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  resetDraft();
-                  setAdding(false);
-                }}
-              >
-                取消
-              </Button>
-              <Button type="button" onClick={saveMemo}>
-                <Save className="mr-2 h-4 w-4" />
-                {editingId ? "更新 Memo" : "儲存 Memo"}
-              </Button>
-            </ActionBar>
-          </CardContent>
-        </Card>
-      ) : null}
-    </ListPage>
-  );
+  function edit(item = {}) {
+    if (adding && !window.confirm("目前表單尚未儲存，要放棄內容並開啟另一筆嗎？")) return;
+    setDraft(createTimedTaskDraft(module, item, todayKey()));
+    setEditingId(item.id || ""); setFormError(""); setAdding(true);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: "start" }));
+  }
+  async function save() {
+    if (savingRef.current) return;
+    setFormError("");
+    let next;
+    try {
+      next = normalizeTimedTask({ ...draft, id: editingId || Date.now(), projectId: p.id, projectName: p.name }, module);
+    } catch (error) { setFormError(error.message); return; }
+    savingRef.current = true; setSaving(true);
+    try {
+      if (editingId) await onUpdate(editingId, next, { title: next.title, status: next.status });
+      else await onSave(next, { title: next.title, status: next.status });
+      setAdding(false); setEditingId("");
+    } catch (error) { setFormError(error.message || "儲存失敗"); }
+    finally { savingRef.current = false; setSaving(false); }
+  }
+  return <div className="task-page"><ListPage
+    title={memo ? "工項 Memo 紀錄" : "待辦事項"} sub={`目前工地：${p.name}｜${memo ? "安排工班進場、施工區間與提醒" : "管理負責人、完成期限與提醒"}`}
+    btn={memo ? "新增 Memo" : "新增待辦"} onAdd={() => { if (!saving) edit(); }}
+    items={exportControls.filteredRecords}
+    toolbar={<RecordExportToolbar controls={exportControls} placeholder={memo ? "搜尋工班、工種、標題或內容" : "搜尋待辦、負責人或內容"} />}
+    emptyText={items.length ? "找不到符合條件的紀錄。" : memo ? "尚無 Memo，新增第一筆工班安排。" : "尚無待辦，新增第一件要完成的事。"}
+    render={item => <Card key={item.id} className={`task-record task-record-${module}`}>
+      <CardContent className="flex flex-col justify-between gap-4 p-5 sm:flex-row">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap gap-2"><Badge>{item.status}</Badge>{memo && <Badge>{item.trade || "未分類工項"}</Badge>}</div>
+          <h3 className="mt-3 break-words text-lg font-bold">{item.title}</h3>
+          {!memo && <p className="mt-1 text-sm text-slate-600">負責人：{item.owner || "未指定"}</p>}
+          <div className="task-record-timing"><p>{memo ? "進場區間" : "完成期限"}：{taskPeriodLabel(item, module)}</p><p>提醒：{reminderLabel(item)}{item.timingVersion === 1 && !item.noDeadline && item.reminderMinutes !== null ? `｜${reminderPreview(item)}` : ""}</p>{!memo && item.status !== "已完成" && taskBaseAt(item)?.getTime() < Date.now() && <p className="font-semibold text-red-700">已超過完成期限</p>}</div>
+          {item.note && <p className="task-record-note">{item.note}</p>}
+          <AttachmentSummary attachments={item.attachments} />
+        </div>
+        <div className="flex flex-wrap items-start gap-2 sm:justify-end">
+          <Button type="button" variant="outline" size="sm" onClick={() => exportControls.exportRecords([item], { from: recordDateKey(item), to: recordDateKey(item) })}><FileDown className="mr-1 h-3.5 w-3.5" />列印本筆</Button>
+          <EditButton label={item.title} onClick={() => { if (!saving) edit(item); }} />
+          <Del label={item.title} onClick={() => { if (!saving) onDelete(item.id); }} />
+        </div>
+      </CardContent>
+    </Card>}
+  >
+    {adding && <div ref={formRef} className="scroll-mt-20">
+      <TaskEditor key={editingId || "new"} module={module} draft={draft} setDraft={setDraft} editing={Boolean(editingId)} saving={saving} error={formError}
+        crews={commonSettings ? activeCommonSettingItems(commonSettings, "crews").map(item => item.name) : []}
+        onSubmit={save} onCancel={() => { if (window.confirm("要取消編輯嗎？尚未儲存的內容將不會保留。")) setAdding(false); }}>
+        <ImageAttachments value={draft.attachments || []} onChange={attachments => setDraft(current => ({ ...current, attachments }))} />
+      </TaskEditor>
+    </div>}
+  </ListPage></div>;
 }
 
 function Checklists({ p }) {
@@ -8110,200 +7962,7 @@ function OperationLogs({ p, records, loading, error }) {
   );
 }
 
-function Todos({ p, items, onSave, onUpdate, onDelete }) {
-  const [adding, setAdding] = useState(false);
-  const emptyDraft = {
-    title: "",
-    owner: "",
-    date: todayKey(),
-    time: currentTimeKey(),
-    status: "一般",
-    note: "",
-    attachments: [],
-  };
-  const [draft, setDraft] = useState(emptyDraft);
-  const [editingId, setEditingId] = useState("");
-
-  function resetDraft() {
-    setDraft({ ...emptyDraft, date: todayKey(), time: currentTimeKey() });
-    setEditingId("");
-  }
-
-  function startEditTodo(todo) {
-    setDraft({
-      ...emptyDraft,
-      ...todo,
-      date: todo.date || todayKey(),
-      time: todo.time || "",
-      attachments: todo.attachments || [],
-    });
-    setEditingId(todo.id);
-    setAdding(true);
-  }
-
-  async function saveTodo() {
-    const next = {
-      id: editingId || Date.now(),
-      projectId: p.id,
-      projectName: p.name,
-      title: draft.title || "未命名待辦",
-      owner: draft.owner || "未指定",
-      date: draft.date || todayKey(),
-      time: draft.time || "",
-      status: draft.status || "一般",
-      note: draft.note,
-      attachments: draft.attachments || [],
-    };
-    if (editingId && onUpdate) {
-      await onUpdate(editingId, next, { title: next.title, status: next.status });
-    } else {
-      await onSave(next, { title: next.title, status: next.status });
-    }
-    resetDraft();
-    setAdding(false);
-  }
-
-  const exportControls = useRecordExport({
-    project: p,
-    title: "待辦事項",
-    records: items,
-    buildPrintRecord: buildTodoPrintRecord,
-  });
-
-  return (
-    <ListPage
-      title="待辦事項"
-      sub={`目前工地：${p.name}`}
-      btn="新增待辦"
-      onAdd={() => {
-        resetDraft();
-        setAdding(true);
-      }}
-      items={exportControls.filteredRecords}
-      toolbar={<RecordExportToolbar controls={exportControls} placeholder="搜尋待辦事項、負責人、日期、優先度或備註" />}
-      emptyText={items.length ? "找不到符合條件的待辦事項。" : "尚無待辦事項，請新增第一筆待辦。"}
-      render={(todo) => (
-        <Card key={todo.id}>
-          <CardContent className="flex flex-col justify-between gap-4 p-5 sm:flex-row">
-            <div>
-              <div className="flex flex-wrap gap-2">
-                <h3 className="text-lg font-bold">{todo.title}</h3>
-                <Badge>{todo.status}</Badge>
-              </div>
-              <p className="mt-2 text-sm text-slate-500">
-                負責人：{todo.owner}｜提醒：{notificationDateTimeLabel(todo)}
-              </p>
-              {todo.note ? <p className="text-sm text-slate-500">{todo.note}</p> : null}
-              <AttachmentSummary attachments={todo.attachments} />
-            </div>
-            <div className="flex flex-wrap items-start gap-2 sm:justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  exportControls.exportRecords([todo], { from: recordDateKey(todo), to: recordDateKey(todo) })
-                }
-              >
-                <FileDown className="mr-1 h-3.5 w-3.5" />
-                列印本筆
-              </Button>
-              <EditButton label={todo.title} onClick={() => startEditTodo(todo)} />
-              <Del label={todo.title} onClick={() => onDelete(todo.id)} />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    >
-      {adding ? (
-        <Card className="mb-4">
-          <CardContent className="grid gap-4 p-5 md:grid-cols-2">
-            <label>
-              <span className="text-sm font-medium">待辦事項</span>
-              <div className="mt-2">
-                <Input
-                  value={draft.title}
-                  onChange={(value) => setDraft({ ...draft, title: value })}
-                  ph="例如：確認浴室門檻收邊"
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">負責人</span>
-              <div className="mt-2">
-                <Input
-                  value={draft.owner}
-                  onChange={(value) => setDraft({ ...draft, owner: value })}
-                  ph="例如：李工務"
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">日期</span>
-              <div className="mt-2">
-                <Input
-                  type="date"
-                  value={draft.date}
-                  onChange={(value) => setDraft({ ...draft, date: value })}
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">時間</span>
-              <div className="mt-2">
-                <Input
-                  type="time"
-                  value={draft.time}
-                  onChange={(value) => setDraft({ ...draft, time: value })}
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">優先度</span>
-              <CustomSelect
-                value={draft.status}
-                onChange={(value) => setDraft({ ...draft, status: value })}
-                options={["一般", "重要", "緊急"]}
-                className="mt-2 space-y-2"
-                otherPlaceholder="請輸入自訂優先度"
-              />
-            </label>
-            <label className="md:col-span-2">
-              <span className="text-sm font-medium">備註</span>
-              <textarea
-                value={draft.note}
-                onChange={(event) => setDraft({ ...draft, note: event.target.value })}
-                className="mt-2 min-h-24 w-full rounded-xl border px-3 py-2 outline-none"
-                placeholder="補充提醒、聯絡資訊或處理條件"
-              />
-            </label>
-            <ImageAttachments
-              className="md:col-span-2"
-              value={draft.attachments}
-              onChange={(attachments) => setDraft({ ...draft, attachments })}
-            />
-            <ActionBar className="md:col-span-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  resetDraft();
-                  setAdding(false);
-                }}
-              >
-                取消
-              </Button>
-              <Button type="button" onClick={saveTodo}>
-                <Save className="mr-2 h-4 w-4" />
-                {editingId ? "更新待辦" : "儲存待辦"}
-              </Button>
-            </ActionBar>
-          </CardContent>
-        </Card>
-      ) : null}
-    </ListPage>
-  );
-}
+function Todos(props) { return <TimedTaskList {...props} module="todos" />; }
 
 function createScheduleDraft(project) {
   const startDate = project.startDate || todayKey();
@@ -10170,6 +9829,7 @@ export default function App() {
       return (
         <Memos
           p={p}
+          commonSettings={commonSettingsValue}
           items={projectMemos}
           onSave={(item, options) => memoRecords.saveItem(item, options)}
           onUpdate={(id, item, options) => memoRecords.updateItem(id, item, options)}

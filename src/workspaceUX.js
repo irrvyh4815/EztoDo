@@ -28,7 +28,7 @@ export function persistentAttachment(item) {
 export const moduleDependencies = {
   dashboard: ["claims", "contracts", "memos", "todos", "daily", "commonSettings", "defects"],
   projects: ["announcements"], claims: ["claims", "contracts"], contracts: ["contracts"],
-  memos: ["memos"], schedule: ["schedule"], todos: ["todos"], defects: ["defects"],
+  memos: ["memos", "commonSettings"], schedule: ["schedule"], todos: ["todos"], defects: ["defects"],
   daily: ["daily", "commonSettings"], commonSettings: ["commonSettings", "daily"],
   operationLogs: ["operationLogs"],
 };

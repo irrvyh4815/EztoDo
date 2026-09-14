@@ -1,3 +1,4 @@
+import { taskRange } from "../shared/taskTiming.js";
 export const calendarModules = { todos: "待辦", memos: "Memo", schedule: "預定進度", meetings: "會議" };
 export const calendarPalette = [
   ["#2563eb", "藍色"], ["#059669", "綠色"], ["#d97706", "橙色"], ["#9333ea", "紫色"],
@@ -44,11 +45,12 @@ export function calendarEventsByDate(projects, records, days, projectFilter = ""
     const key = `${project.id}:${record.module}:${record.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    let start = validDate(record.module === "schedule" ? record.startDate || record.endDate : record.date);
-    let end = record.module === "schedule" ? validDate(record.endDate || record.startDate) : start;
+    const range = taskRange(record, record.module);
+    let start = validDate(range?.start);
+    let end = validDate(range?.end);
     if (!start || !end) continue;
     if (start > end) [start, end] = [end, start];
-    const event = { ...record, key, project, start, end, color: projectCalendarColor(project) };
+    const event = { ...record, time: range.time, key, project, start, end, color: projectCalendarColor(project) };
     // Iterate only visible days, even when a construction schedule spans years.
     for (const day of days) {
       if (day >= start && day <= end) result.get(day).push(event);
