@@ -3,6 +3,7 @@ import HomeCalendar from "./HomeCalendar.jsx";
 import Personnel from "./Personnel.jsx";
 import CalendarSubscriptionSettings from "./CalendarSubscriptionSettings.jsx";
 import MeetingTextEditor from "./MeetingTextEditor.jsx";
+import CommonSettings from "./CommonSettings.jsx";
 import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
 import { draftKey, readBrowserDraft, persistentAttachment, localMonth, needsRecords, workspaceHash, parseWorkspaceHash } from "./workspaceUX.js";
 import { createRecordCache } from "./recordCache.js";
@@ -11,11 +12,9 @@ import { calendarModules, projectCalendarColor } from "./homeCalendar.js";
 import { motion } from "framer-motion";
 import {
   activeCommonSettingItems,
-  countCommonSettingUsage,
   defaultCommonSettings,
   normalizeCommonSettingItem,
   normalizeCommonSettings,
-  removeCommonSettingItem,
   summarizeDailyReportResources,
 } from "./commonSettings.js";
 import {
@@ -25,8 +24,6 @@ import {
 } from "./notificationRules.js";
 import {
   AlertTriangle,
-  ArrowDown,
-  ArrowUp,
   Bell,
   Building2,
   CalendarDays,
@@ -145,7 +142,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26091003";
+const APP_VERSION = "eztodo_26091401";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -6151,327 +6148,6 @@ function Checklists({ p }) {
   );
 }
 
-const commonSettingSections = [
-  {
-    type: "crews",
-    title: "常用工班",
-    singular: "工班",
-    description: "統一工班名稱與統計分類，施工日報只顯示啟用項目。",
-  },
-  {
-    type: "materials",
-    title: "常用材料",
-    singular: "材料",
-    description: "管理常用材料及預設單位，供施工日報與後續庫存功能共用。",
-  },
-  {
-    type: "equipment",
-    title: "常用機具設備",
-    singular: "機具設備",
-    description: "管理設備名稱、規格與預設計量單位。",
-  },
-];
-
-function commonSettingDraft(type, item = {}) {
-  return {
-    id: item.id || "",
-    name: item.name || "",
-    unit: item.unit || "",
-    specification: item.specification || "",
-    statisticsCategory: item.statisticsCategory || item.name || "",
-    aliases: (item.aliases || []).join("、"),
-    isActive: item.isActive ?? true,
-    type,
-  };
-}
-
-function CommonSettings({ p, settings, onSave, dailyReports = [], loading, error }) {
-  const [activeType, setActiveType] = useState("crews");
-  const [draft, setDraft] = useState(() => commonSettingDraft("crews"));
-  const [busy, setBusy] = useState(false);
-  const [formError, setFormError] = useState("");
-  const section = commonSettingSections.find((item) => item.type === activeType);
-  const items = [...settings[activeType]].sort(
-    (a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "zh-Hant"),
-  );
-
-  function resetDraft(type = activeType) {
-    setDraft(commonSettingDraft(type));
-    setFormError("");
-  }
-
-  async function persistCollection(nextItems) {
-    setBusy(true);
-    setFormError("");
-    try {
-      await onSave({
-        ...settings,
-        [activeType]: nextItems.map((item, index) => ({
-          ...item,
-          sortOrder: index + 1,
-        })),
-      });
-    } catch (saveError) {
-      setFormError(saveError.message || "常用設定儲存失敗");
-      throw saveError;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveDraft() {
-    const name = draft.name.trim();
-    if (!name) {
-      setFormError(`請輸入${section.singular}名稱`);
-      return;
-    }
-    const duplicate = items.find(
-      (item) => item.name.trim().toLowerCase() === name.toLowerCase() && item.id !== draft.id,
-    );
-    if (duplicate) {
-      setFormError(`已有同名${section.singular}`);
-      return;
-    }
-
-    const nextItem = normalizeCommonSettingItem(
-      {
-        ...draft,
-        id: draft.id || `${activeType}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        name,
-        statisticsCategory: draft.statisticsCategory.trim() || name,
-        aliases: draft.aliases,
-        sortOrder: draft.id
-          ? items.find((item) => item.id === draft.id)?.sortOrder || items.length + 1
-          : items.length + 1,
-      },
-      items.length,
-      activeType,
-    );
-    const nextItems = draft.id
-      ? items.map((item) => (item.id === draft.id ? nextItem : item))
-      : [...items, nextItem];
-    await persistCollection(nextItems);
-    resetDraft();
-  }
-
-  async function toggleItem(item) {
-    await persistCollection(
-      items.map((candidate) =>
-        candidate.id === item.id ? { ...candidate, isActive: !candidate.isActive } : candidate,
-      ),
-    );
-  }
-
-  async function permanentlyDeleteItem(item) {
-    const usageCount = countCommonSettingUsage(dailyReports, activeType, item);
-    const usageMessage = usageCount
-      ? `目前偵測到 ${usageCount} 筆施工日報紀錄使用此選項。`
-      : "目前未偵測到施工日報使用此選項。";
-    const confirmed = window.confirm(
-      `確定永久刪除「${item.name}」？\n\n${usageMessage}\n永久刪除無法復原，可能導致已使用此選項的表單部分數據遺失或無法正確統計。若只是不想繼續使用，建議改用「停用」。`,
-    );
-    if (!confirmed) return;
-
-    setBusy(true);
-    setFormError("");
-    try {
-      await onSave(removeCommonSettingItem(settings, activeType, item.id));
-      if (draft.id === item.id) resetDraft();
-    } catch (deleteError) {
-      setFormError(deleteError.message || "永久刪除失敗");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function moveItem(index, direction) {
-    const target = index + direction;
-    if (target < 0 || target >= items.length) return;
-    const nextItems = [...items];
-    [nextItems[index], nextItems[target]] = [nextItems[target], nextItems[index]];
-    await persistCollection(nextItems);
-  }
-
-  return (
-    <div>
-      <Header title="常用設定" sub={`目前工地：${p.name}｜統一施工日報選項與統計名稱`} />
-      {error || formError ? (
-        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error || formError}
-        </div>
-      ) : null}
-      <div className="mb-4 grid gap-2 sm:grid-cols-3">
-        {commonSettingSections.map((item) => (
-          <Button
-            key={item.type}
-            type="button"
-            variant={activeType === item.type ? "primary" : "outline"}
-            onClick={() => {
-              setActiveType(item.type);
-              resetDraft(item.type);
-            }}
-          >
-            {item.title}
-          </Button>
-        ))}
-      </div>
-      <Card className="mb-4">
-        <CardContent className="p-5">
-          <h2 className="text-lg font-bold">{draft.id ? `編輯${section.singular}` : `新增${section.singular}`}</h2>
-          <p className="mt-1 text-sm text-slate-500">{section.description}</p>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <label>
-              <span className="text-sm font-medium">{section.singular}名稱</span>
-              <div className="mt-2">
-                <Input
-                  value={draft.name}
-                  onChange={(name) =>
-                    setDraft((current) => ({
-                      ...current,
-                      name,
-                      statisticsCategory:
-                        current.statisticsCategory === current.name
-                          ? name
-                          : current.statisticsCategory,
-                    }))
-                  }
-                  ph={`例如：${activeType === "crews" ? "泥作工班" : activeType === "materials" ? "水泥" : "挖土機"}`}
-                />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">統計分類</span>
-              <div className="mt-2">
-                <Input
-                  value={draft.statisticsCategory}
-                  onChange={(statisticsCategory) => setDraft({ ...draft, statisticsCategory })}
-                  ph="Dashboard 統一顯示名稱"
-                />
-              </div>
-            </label>
-            {activeType !== "crews" ? (
-              <label>
-                <span className="text-sm font-medium">預設單位</span>
-                <div className="mt-2">
-                  <Input
-                    value={draft.unit}
-                    onChange={(unit) => setDraft({ ...draft, unit })}
-                    ph={activeType === "materials" ? "例如：包、公斤、立方米" : "例如：台次、台班"}
-                  />
-                </div>
-              </label>
-            ) : null}
-            {activeType === "equipment" ? (
-              <label>
-                <span className="text-sm font-medium">規格</span>
-                <div className="mt-2">
-                  <Input
-                    value={draft.specification}
-                    onChange={(specification) => setDraft({ ...draft, specification })}
-                    ph="例如：120 型"
-                  />
-                </div>
-              </label>
-            ) : null}
-            <label className="md:col-span-2">
-              <span className="text-sm font-medium">同義詞 / AI 映射名稱</span>
-              <div className="mt-2">
-                <Input
-                  value={draft.aliases}
-                  onChange={(aliases) => setDraft({ ...draft, aliases })}
-                  ph="以逗號或頓號分隔，例如：泥作、泥作工、泥作班"
-                />
-              </div>
-            </label>
-            <ActionBar className="md:col-span-2">
-              {draft.id ? (
-                <Button type="button" variant="outline" onClick={() => resetDraft()}>
-                  取消編輯
-                </Button>
-              ) : null}
-              <Button type="button" onClick={saveDraft} disabled={busy || loading}>
-                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                {draft.id ? "更新" : "新增"}
-              </Button>
-            </ActionBar>
-          </div>
-        </CardContent>
-      </Card>
-      <div className="grid gap-3">
-        {items.map((item, index) => (
-          <Card key={item.id}>
-            <CardContent className="p-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-bold">{item.name}</h3>
-                    <Badge>{item.isActive ? "啟用中" : "已停用"}</Badge>
-                    <Badge>統計：{item.statisticsCategory || item.name}</Badge>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-500">
-                    {item.unit ? `單位：${item.unit}｜` : ""}
-                    {item.specification ? `規格：${item.specification}｜` : ""}
-                    同義詞：{item.aliases.length ? item.aliases.join("、") : "尚未設定"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    disabled={index === 0 || busy}
-                    onClick={() => moveItem(index, -1)}
-                    aria-label={`上移 ${item.name}`}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    disabled={index === items.length - 1 || busy}
-                    onClick={() => moveItem(index, 1)}
-                    aria-label={`下移 ${item.name}`}
-                  >
-                    <ArrowDown className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setDraft(commonSettingDraft(activeType, item))}
-                  >
-                    <Pencil className="mr-1 h-4 w-4" />
-                    編輯
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={item.isActive ? "danger" : "subtle"}
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => toggleItem(item)}
-                  >
-                    {item.isActive ? "停用" : "重新啟用"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="danger"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => permanentlyDeleteItem(item)}
-                  >
-                    <Trash2 className="mr-1 h-4 w-4" />
-                    永久刪除
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function Daily({ p, userId, records = {}, commonSettings, onQuickAddSetting }) {
   const storageKey = draftKey(userId, p.id || p.name, "daily");

@@ -15,6 +15,7 @@ export function validCalendarToken(token, row) {
 }
 
 const modules = { todos: "待辦", memos: "Memo", schedule: "預定進度", meetings: "會議" };
+const feedRevision = new Date("2026-09-14T00:00:00Z");
 const escapeText = value => String(value || "").replace(/\\/g, "\\\\").replace(/\r\n|\r|\n/g, "\\n").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 export function foldCalendarLine(line) {
   const lines = []; let current = "", bytes = 0;
@@ -52,12 +53,14 @@ export function renderCalendarFeed(project, records, origin, now = new Date()) {
     if (seen.has(uid)) continue;
     seen.add(uid);
     const updated = record.updated_at || record.created_at;
-    const modified = updated && Number.isFinite(new Date(updated).getTime()) ? stamp(updated) : stamp(now);
+    const modified = stamp(Math.max(feedRevision.getTime(), updated && Number.isFinite(new Date(updated).getTime()) ? new Date(updated).getTime() : now.getTime()));
     lines.push("BEGIN:VEVENT", `UID:${escapeText(uid)}`, `DTSTAMP:${modified}`, `LAST-MODIFIED:${modified}`);
     const time = String(item.time || item.reminderTime || item.dueTime || "");
+    let alarmAt = new Date(`${start}T09:00:00+08:00`);
     if (record.module !== "schedule" && /^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
       // Project times are Taiwan wall-clock times, represented as UTC for every Apple device.
       const begin = new Date(`${start}T${time}:00+08:00`);
+      alarmAt = begin;
       lines.push(`DTSTART:${stamp(begin)}`, `DTEND:${stamp(new Date(begin.getTime() + 60 * 60 * 1000))}`);
     } else lines.push(`DTSTART;VALUE=DATE:${start.replace(/-/g, "")}`, `DTEND;VALUE=DATE:${nextDay(end)}`);
     const status = item.status || record.status || "";
@@ -65,7 +68,13 @@ export function renderCalendarFeed(project, records, origin, now = new Date()) {
       `DESCRIPTION:${escapeText(`${modules[record.module]}${status ? `｜${status}` : ""}\n請在 EZtoDO 查看及編輯完整資料。`)}`,
       `CATEGORIES:${escapeText(modules[record.module])}`,
       `URL:${origin}/#project=${encodeURIComponent(project.project_id)}&module=${encodeURIComponent(record.module)}`,
-      "TRANSP:TRANSPARENT", "CLASS:PRIVATE", "END:VEVENT");
+      "TRANSP:TRANSPARENT", "CLASS:PRIVATE");
+    const finished = ["已完成", "完成", "已取消", "取消", "completed", "done", "cancelled", "canceled"].includes(String(status).trim().toLowerCase());
+    if (!finished && alarmAt.getTime() >= now.getTime()) {
+      lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER;VALUE=DATE-TIME:${stamp(alarmAt)}`,
+        `DESCRIPTION:${escapeText(`[${project.name}] ${item.title || item.name || record.title || "行程提醒"}`)}`, "END:VALARM");
+    }
+    lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");
   return lines.map(foldCalendarLine).join("\r\n") + "\r\n";

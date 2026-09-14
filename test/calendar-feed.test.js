@@ -21,6 +21,25 @@ const project = { project_id: "p", name: "甲工地", calendar_color: "#2563eb" 
 const record = (id, module, payload, extra = {}) => ({ id, module, payload, project_id: "p", updated_at: "2026-09-10T00:00:00Z", ...extra });
 const render = records => renderCalendarFeed(project, records, "https://app.example.test").replace(/\r\n /g, "");
 
+test("subscriptions carry one display alarm at scheduled Taiwan time or 09:00 on the first all-day date", () => {
+  const ics = renderCalendarFeed(project, [
+    record("timed", "todos", { date: "2026-09-15", time: "08:30", title: "開工確認" }),
+    record("all-day", "memos", { date: "2026-09-15" }),
+    record("range", "schedule", { startDate: "2026-09-18", endDate: "2026-09-16" }),
+    record("meeting", "meetings", { date: "2026-09-15", reminderTime: "00:30" }),
+    record("past", "todos", { date: "2026-09-13", time: "10:00" }),
+    record("done", "todos", { date: "2026-09-15", status: "已完成" }),
+    record("cancel", "memos", { date: "2026-09-15", status: "已取消" }),
+  ], "https://app.example.test", new Date("2026-09-14T00:00:00Z")).replace(/\r\n /g, "");
+  assert.equal(ics.match(/BEGIN:VALARM/g).length, 4);
+  assert.equal(ics.match(/ACTION:DISPLAY/g).length, 4);
+  for (const stamp of ["20260915T003000Z", "20260915T010000Z", "20260916T010000Z", "20260914T163000Z"]) assert.ok(ics.includes(`TRIGGER;VALUE=DATE-TIME:${stamp}`));
+  for (const event of ics.split("BEGIN:VEVENT").slice(1)) {
+    if (/UID:(past|done|cancel)@/.test(event)) assert.doesNotMatch(event, /VALARM/);
+  }
+  assert.match(ics, /LAST-MODIFIED:20260914T000000Z/);
+});
+
 test("ICS handles Taiwan time, exclusive all-day ends, leap days and reversed ranges", () => {
   const ics = render([
     record("timed", "todos", { date: "2026-09-10", time: "00:30" }),
@@ -46,9 +65,9 @@ test("ICS excludes other projects, non-calendar modules, invalid dates and priva
   ]);
   assert.equal(ics.match(/BEGIN:VEVENT/g).length, 1);
   assert.doesNotMatch(ics, /SECRET|other@|claim@|invalid@|missing@/);
-  const changed = render([{ ...visible, payload: { ...visible.payload, title: "改名" }, updated_at: "2026-09-11T00:00:00Z" }]);
+  const changed = render([{ ...visible, payload: { ...visible.payload, title: "改名" }, updated_at: "2026-09-15T00:00:00Z" }]);
   assert.equal(ics.match(/UID:.+/)[0], changed.match(/UID:.+/)[0]);
-  assert.match(changed, /LAST-MODIFIED:20260911T000000Z/);
+  assert.match(changed, /LAST-MODIFIED:20260915T000000Z/);
 });
 
 test("ICS escapes injection and folds Unicode safely at 75 octets", () => {

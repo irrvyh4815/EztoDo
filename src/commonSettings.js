@@ -147,6 +147,21 @@ export function removeCommonSettingItem(settings, type, itemId) {
   };
 }
 
+export function filterCommonSettingItems(items, query = "", status = "all") {
+  const term = query.trim().toLocaleLowerCase();
+  return items.filter(item => (status === "all" || (status === "active" ? item.isActive : !item.isActive)) &&
+    (!term || [item.name, item.unit, item.statisticsCategory, item.specification, ...(item.aliases || [])].join(" ").toLocaleLowerCase().includes(term)));
+}
+
+export function moveCommonSettingItem(items, id, direction) {
+  const index = items.findIndex(item => item.id === id);
+  const target = index + direction;
+  const next = [...items];
+  if (index < 0 || ![-1, 1].includes(direction) || target < 0 || target >= next.length) return next;
+  [next[index], next[target]] = [next[target], next[index]];
+  return next.map((item, i) => ({ ...item, sortOrder: i+1 }));
+}
+
 function compactName(value) {
   return String(value || "")
     .trim()
