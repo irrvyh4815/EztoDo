@@ -50,6 +50,9 @@ test("publicUser never lowers administrator permissions", () => {
       name: "Admin",
       memberNumber: "",
       organizationName: "",
+      groupId: "",
+      groupRoleId: "",
+      groupRoleName: "",
       role: "admin",
       canView: true,
       canEdit: true,
@@ -71,4 +74,3 @@ test("methodNotAllowed exposes an Allow header", async () => {
   assert.equal(response.headers.get("allow"), "GET, POST");
   assert.equal((await response.json()).code, "METHOD_NOT_ALLOWED");
 });
-

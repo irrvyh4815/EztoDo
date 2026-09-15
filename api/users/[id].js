@@ -1,11 +1,13 @@
-import { hashPassword, requireUser } from "../_lib/auth.js";
+import { hashPassword } from "../_lib/auth.js";
 import {
   deleteUser,
   ensureSchema,
   updateUserPassword,
   updateUserPermissions,
   updateUserProfile,
+  assignAccountGroup,
 } from "../_lib/db.js";
+import { requireSystemAdmin } from '../_lib/permissions.js';
 import {
   ApiError,
   json,
@@ -14,14 +16,6 @@ import {
   readJson,
 } from "../_lib/http.js";
 
-function requireAdmin(request) {
-  const user = requireUser(request);
-  if (user.role !== "admin") {
-    throw new ApiError(403, "需要管理員權限", "ADMIN_REQUIRED");
-  }
-  return user;
-}
-
 export default {
   async fetch(request) {
     if (!["PATCH", "DELETE"].includes(request.method)) {
@@ -29,8 +23,8 @@ export default {
     }
 
     try {
-      requireAdmin(request);
       await ensureSchema();
+      await requireSystemAdmin(request);
 
       const id = new URL(request.url).pathname.split("/").pop();
 
@@ -43,6 +37,9 @@ export default {
       }
 
       const body = await readJson(request);
+      if (body.action === 'assign-group') {
+        return json({ user: await assignAccountGroup(id, body.groupId, body.groupRoleId) });
+      }
       if (body.password) {
         if (body.password.length < 8) {
           throw new ApiError(400, "密碼至少需要 8 碼", "PASSWORD_TOO_SHORT");

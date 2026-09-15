@@ -27,6 +27,12 @@ export async function requirePermission(request, permission) {
   return user;
 }
 
+export async function requireSystemAdmin(request) {
+  const user = await requirePermission(request, 'view');
+  if (user.role !== 'admin') throw new ApiError(403, '僅最高權限系統管理員可管理帳號及群組', 'ADMIN_REQUIRED');
+  return user;
+}
+
 export async function requireProjectAccess(request, projectId, permission = "view") {
   const user = await requirePermission(request, permission === "manage" ? "edit" : permission);
   const access = await getProjectAccess(projectId, user.id);
@@ -59,6 +65,9 @@ export async function requireProjectAccess(request, projectId, permission = "vie
 
   if (permission === "manage" && !["owner", "manager"].includes(access.member_role)) {
     throw new ApiError(403, "此帳號沒有此工地的成員管理權限", "PROJECT_MANAGE_REQUIRED");
+  }
+  if (permission === 'manage' && user.group_can_manage === false) {
+    throw new ApiError(403, '目前群組階級未開放工地管理權限', 'GROUP_MANAGE_REQUIRED');
   }
 
   return { user, access };

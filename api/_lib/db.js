@@ -2,6 +2,7 @@ import pg from "pg";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { hashPassword } from "./auth.js";
 import { ApiError } from "./http.js";
+import { applyGroupPermissions, normalizeGroup } from "../../shared/accountGroups.js";
 
 const { Pool } = pg;
 
@@ -114,6 +115,11 @@ export function mapUser(row) {
     name: row.name,
     memberNumber: row.member_no || "",
     organizationName: row.organization_name || "",
+    groupId: row.group_id || "",
+    groupRoleId: row.group_role_id || "",
+    groupRoleName: row.group_role_name || "",
+    accountCanView: row.account_can_view ?? row.can_view,
+    accountCanEdit: row.account_can_edit ?? row.can_edit,
     role: row.role,
     canView: isAdmin ? true : row.can_view,
     canEdit: isAdmin ? true : row.can_edit,
@@ -321,6 +327,14 @@ async function initializeSchema() {
   await query("alter table users add column if not exists can_edit boolean not null default false");
   await query("alter table users add column if not exists member_no text");
   await query("alter table users add column if not exists organization_name text not null default ''");
+  await query(`create table if not exists account_groups (
+    id text primary key, name text not null, roles jsonb not null,
+    version integer not null default 1, created_at timestamptz not null default now()
+  )`);
+  await query("create unique index if not exists account_groups_name_idx on account_groups (lower(name))");
+  await query("alter table users add column if not exists group_id text references account_groups(id)");
+  await query("alter table users add column if not exists group_role_id text");
+  await query("create index if not exists users_group_idx on users (group_id)");
   await query("update users set organization_name = '測試分組1' where organization_name is null or organization_name = ''");
   await query("alter table users add column if not exists email_verified boolean");
   await query("alter table users add column if not exists email_verified_at timestamptz");
@@ -455,12 +469,48 @@ export async function findUserByEmail(email) {
   const result = await query("select * from users where lower(email) = lower($1)", [
     email,
   ]);
-  return result.rows[0] || null;
+  return hydrateUserGroup(result.rows[0] || null);
 }
 
 export async function findUserById(id) {
   const result = await query("select * from users where id = $1", [id]);
-  return result.rows[0] || null;
+  return hydrateUserGroup(result.rows[0] || null);
+}
+
+async function hydrateUserGroup(user) {
+  if (!user?.group_id) return user;
+  const result = await query('select * from account_groups where id = $1', [user.group_id]);
+  return applyGroupPermissions(user, result.rows[0]);
+}
+
+export async function listAccountGroups() {
+  const result = await query('select * from account_groups order by name, id');
+  return result.rows;
+}
+
+export async function saveAccountGroup(input) {
+  const previous = input.id ? (await query('select * from account_groups where id = $1', [input.id])).rows[0] : null;
+  if (input.id && !previous) throw new ApiError(404, '找不到群組', 'GROUP_NOT_FOUND');
+  let next;
+  try { next = normalizeGroup(input, previous); } catch (error) { throw new ApiError(400, error.message, 'INVALID_GROUP'); }
+  try {
+    const result = previous ? await query(`update account_groups set name = $2, roles = $3::jsonb, version = version + 1 where id = $1 and version = $4 returning *`, [previous.id, next.name, JSON.stringify(next.roles), input.version])
+      : await query('insert into account_groups (id, name, roles) values ($1, $2, $3::jsonb) returning *', [randomUUID(), next.name, JSON.stringify(next.roles)]);
+    if (!result.rows[0]) throw new ApiError(409, '群組已被其他管理員修改，請重新開啟管理面板後再試', 'GROUP_CONFLICT');
+    return result.rows[0];
+  } catch (error) {
+    if (error.code === '23505') throw new ApiError(409, '已有相同名稱的群組', 'GROUP_NAME_CONFLICT');
+    throw error;
+  }
+}
+
+export async function assignAccountGroup(id, groupId, roleId) {
+  if (typeof groupId !== 'string' || typeof roleId !== 'string' || (!groupId && roleId)) throw new ApiError(400, '請選擇有效群組與階級', 'INVALID_GROUP_ASSIGNMENT');
+  // Validate membership in the selected group's roles in the same statement as the write.
+  const result = await query(`update users set group_id = nullif($2, ''), group_role_id = nullif($3, '')
+    where id = $1 and ($2 = '' or exists (select 1 from account_groups g, jsonb_array_elements(g.roles) r where g.id = $2 and r->>'id' = $3)) returning *`, [id, groupId, roleId]);
+  if (!result.rows[0]) throw new ApiError(400, '帳號、群組或階級不存在，請重新載入後再試', 'INVALID_GROUP_ASSIGNMENT');
+  return mapUser(await hydrateUserGroup(result.rows[0]));
 }
 
 export async function insertUser({
@@ -619,7 +669,7 @@ export async function resetPasswordWithToken(token, passwordHash) {
     [hashVerificationToken(token), passwordHash],
   );
 
-  return result.rows[0] ? mapUser(result.rows[0]) : null;
+  return result.rows[0] ? mapUser(await hydrateUserGroup(result.rows[0])) : null;
 }
 
 export async function listUsers() {
@@ -631,7 +681,8 @@ export async function listUsers() {
      group by u.id
      order by u.organization_name asc, u.member_no asc nulls last, u.created_at asc`,
   );
-  return result.rows.map(mapUser);
+  const groups = result.rows.some(row => row.group_id) ? await listAccountGroups() : [];
+  return result.rows.map(row => mapUser(applyGroupPermissions(row, groups.find(group => group.id === row.group_id))));
 }
 
 export async function markUserLogin(id) {
@@ -643,7 +694,7 @@ export async function markUserLogin(id) {
     [id],
   );
 
-  return result.rows[0] ? mapUser(result.rows[0]) : null;
+  return result.rows[0] ? mapUser(await hydrateUserGroup(result.rows[0])) : null;
 }
 
 export async function updateUserPermissions(id, { role, canView, canEdit }) {
@@ -652,8 +703,9 @@ export async function updateUserPermissions(id, { role, canView, canEdit }) {
 
   const nextRole =
     current.role === "admin" ? "admin" : role === "admin" ? "admin" : role || current.role;
-  const requestedCanView = canView ?? current.can_view;
-  const requestedCanEdit = canEdit ?? current.can_edit;
+  if (role !== undefined && !['admin', 'member'].includes(role)) throw new ApiError(400, '帳號角色無效', 'INVALID_ROLE');
+  const requestedCanView = canView ?? current.account_can_view ?? current.can_view;
+  const requestedCanEdit = canEdit ?? current.account_can_edit ?? current.can_edit;
   const nextCanView = nextRole === "admin" ? true : Boolean(requestedCanView);
   const nextCanEdit =
     nextRole === "admin" ? true : nextCanView && Boolean(requestedCanEdit);
@@ -668,7 +720,7 @@ export async function updateUserPermissions(id, { role, canView, canEdit }) {
     [id, nextRole, nextCanView, nextCanEdit],
   );
 
-  return result.rows[0] ? mapUser(result.rows[0]) : null;
+  return result.rows[0] ? mapUser(await hydrateUserGroup(result.rows[0])) : null;
 }
 
 export async function updateUserProfile(id, { name }) {
@@ -680,7 +732,7 @@ export async function updateUserProfile(id, { name }) {
     [id, name],
   );
 
-  return result.rows[0] ? mapUser(result.rows[0]) : null;
+  return result.rows[0] ? mapUser(await hydrateUserGroup(result.rows[0])) : null;
 }
 
 export async function updateUserPassword(id, passwordHash) {
@@ -692,7 +744,7 @@ export async function updateUserPassword(id, passwordHash) {
     [id, passwordHash],
   );
 
-  return result.rows[0] ? mapUser(result.rows[0]) : null;
+  return result.rows[0] ? mapUser(await hydrateUserGroup(result.rows[0])) : null;
 }
 
 export async function deleteUser(id) {
@@ -722,7 +774,11 @@ export async function listProjects(user) {
      order by p.created_at asc`,
     [user?.id || "", isAdmin ? "admin" : "member"],
   );
-  return result.rows.map(mapProject);
+  return result.rows.map(row => {
+    const project = mapProject(row);
+    if (isAdmin) return project;
+    return { ...project, canView: project.canView && Boolean(user.can_view), canEdit: project.canEdit && Boolean(user.can_edit), canManage: project.canManage && Boolean(user.can_edit) && user.group_can_manage !== false };
+  });
 }
 
 export async function insertProject(project, userId) {

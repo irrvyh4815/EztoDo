@@ -14,6 +14,7 @@ import {
 import { requireProjectAccess, requireProjectModuleAccess } from "../../../_lib/permissions.js";
 import { normalizePersonnel } from "../../../../shared/personnel.js";
 import { normalizeTimedTask } from "../../../../shared/taskTiming.js";
+import { normalizeClaim, normalizeVariations } from "../../../../shared/claimAccounting.js";
 
 function idsFromUrl(url) {
   const parts = new URL(url).pathname.split("/").filter(Boolean);
@@ -51,6 +52,21 @@ export default {
         const body = await readJson(request);
         if (!body.title?.trim()) {
           throw new ApiError(400, "請輸入紀錄標題", "RECORD_TITLE_REQUIRED");
+        }
+        if (existingRecord.module === "contracts" && body.payload?.variationVersion === 1) {
+          try { body.payload.variations = normalizeVariations(body.payload); }
+          catch (error) { throw new ApiError(400, error.message, "INVALID_VARIATION"); }
+        }
+        if (existingRecord.module === "claims" && body.payload?.accountingVersion === 2) {
+          let contract = null;
+          if (body.payload.sourceType === "contract") {
+            await requireProjectModuleAccess(request, projectId, "contracts", "view");
+            contract = await getProjectRecord(projectId, body.payload.contractId);
+            if (contract?.module !== "contracts") throw new ApiError(400, "找不到連結合約", "INVALID_CONTRACT");
+            contract = { ...contract.payload, id: contract.id };
+          }
+          try { body.payload = normalizeClaim(body.payload, contract); }
+          catch (error) { throw new ApiError(400, error.message, "INVALID_CLAIM"); }
         }
         if (["memos", "todos"].includes(existingRecord.module) && body.payload?.timingVersion === 1) {
           try { body.payload = normalizeTimedTask(body.payload, existingRecord.module); }

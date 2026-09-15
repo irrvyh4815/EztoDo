@@ -6,6 +6,9 @@ import MeetingTextEditor from "./MeetingTextEditor.jsx";
 import CommonSettings from "./CommonSettings.jsx";
 import { DailyField, DailySection } from "./DailyFormParts.jsx";
 import TaskEditor from "./TaskEditor.jsx";
+import ClaimEditor, { newClaimLine, VariationRows } from "./ClaimEditor.jsx";
+import AccountGroups, { AccountGroupAssignment } from './AccountGroups.jsx';
+import { budgetSources, contractBudget, expenseKinds, expenseTotals, legacyClaimRows, lineAmount, lineTotal, normalizeClaim, normalizeVariations } from "../shared/claimAccounting.js";
 import { createTimedTaskDraft, normalizeTimedTask, taskBaseAt, taskPeriodLabel, reminderLabel, reminderPreview } from "../shared/taskTiming.js";
 import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
 import { draftKey, readBrowserDraft, persistentAttachment, localMonth, needsRecords, workspaceHash, parseWorkspaceHash } from "./workspaceUX.js";
@@ -145,7 +148,7 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26091403";
+const APP_VERSION = "eztodo_26091501";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
@@ -242,7 +245,7 @@ function defaultAccountDraft() {
   return {
     name: "",
     email: "",
-    organizationName: organizationOptions[0],
+    organizationName: "",
     password: "",
     role: "member",
     canView: true,
@@ -308,7 +311,8 @@ const twd = (n) =>
   new Intl.NumberFormat("zh-TW", {
     style: "currency",
     currency: "TWD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(n || 0);
 
 function parseDate(value) {
@@ -2390,15 +2394,9 @@ function numberValue(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function claimDetailAmount(row = {}) {
-  const directAmount = Number(row.amount);
-  if (Number.isFinite(directAmount) && directAmount > 0) return directAmount;
-  return numberValue(row.quantity) * numberValue(row.unitPrice);
-}
+function claimDetailAmount(row = {}) { return lineAmount(row); }
 
-function claimDetailTotal(details = []) {
-  return details.reduce((total, row) => total + claimDetailAmount(row), 0);
-}
+function claimDetailTotal(details = []) { return lineTotal(details); }
 
 function claimRetentionAmount(claim = {}) {
   return numberValue(claim.retentionAmount);
@@ -2470,7 +2468,7 @@ function contractForClaim(claim = {}, contracts = []) {
 
 function claimContractAmount(claim = {}, contracts = []) {
   const contract = contractForClaim(claim, contracts);
-  return numberValue(claim.contractAmount || contract?.amount);
+  return contract ? contractBudget(contract).revised : numberValue(claim.contractAmount);
 }
 
 function normalizedClaim(claim = {}, contracts = []) {
@@ -2483,7 +2481,7 @@ function normalizedClaim(claim = {}, contracts = []) {
     ...claim,
     sourceType: claim.sourceType || (temporary ? "temporary" : "contract"),
     contractId: claim.contractId || contract?.id || "",
-    contractAmount: claimContractAmount(claim, contracts),
+    contractAmount: claim.contractBudgetSnapshot?.revised ?? claimContractAmount(claim, contracts),
     grossAmount,
     retentionAmount: claimRetentionAmount(claim),
     cleaningFee: claimCleaningFee(claim),
@@ -2498,7 +2496,7 @@ function normalizedClaim(claim = {}, contracts = []) {
 
 function summarizeClaims(claims = [], contracts = []) {
   const normalized = claims.map((claim) => normalizedClaim(claim, contracts));
-  const contractTotal = contracts.reduce((total, contract) => total + numberValue(contract.amount), 0);
+  const contractTotal = contracts.reduce((total, contract) => total + contractBudget(contract).revised, 0);
   const temporaryContractTotal = normalized
     .filter((claim) => claim.temporary)
     .reduce((total, claim) => total + Math.max(claim.contractAmount, claim.grossAmount), 0);
@@ -2540,7 +2538,7 @@ function summarizeClaims(claims = [], contracts = []) {
         claims: [],
         formalContractTotal: contracts
           .filter((contract) => contract.vendor === vendor)
-          .reduce((total, contract) => total + numberValue(contract.amount), 0),
+          .reduce((total, contract) => total + contractBudget(contract).revised, 0),
         temporaryContractTotal: 0,
         grossAmount: 0,
         netAmount: 0,
@@ -2592,7 +2590,8 @@ function buildClaimPrintRecord(record) {
       ["廠商名稱", claim.vendor],
       ["工程類別", claim.trade],
       ["合約 / 發包名稱", claim.contract],
-      ["合約總額", twd(claim.contractAmount)],
+      ["本次保存的合約總額", twd(claim.contractAmount)],
+      ...(claim.contractBudgetSnapshot ? [["原合約", twd(claim.contractBudgetSnapshot.original)], ["核准追加減", twd(claim.contractBudgetSnapshot.approved)]] : []),
       ["期別", claim.period],
       ["請款月份", claim.month],
       ["請款總額", twd(claim.grossAmount)],
@@ -2609,12 +2608,12 @@ function buildClaimPrintRecord(record) {
             title: "請款明細",
             rows: claim.details.map((row, index) => ({
               index: index + 1,
-              item: row.item,
+              item: `${expenseKinds[row.category] || "工程款"}｜${budgetSources[row.budgetSource] || "原合約內"}${row.variationTitle ? `：${row.variationTitle}` : ""}\n${row.item}`,
               quantity: row.quantity,
               unit: row.unit,
               unitPrice: row.unitPrice ? twd(row.unitPrice) : "",
               amount: twd(claimDetailAmount(row)),
-              note: row.note,
+              note: [row.workDate, row.reference, row.note].filter(Boolean).join("｜"),
             })),
             columns: [
               ["index", "序"],
@@ -2642,13 +2641,16 @@ function buildContractPrintRecord(record) {
       ["合約名稱", record.name],
       ["廠商", record.vendor],
       ["工程類別", record.trade],
-      ["合約金額", twd(record.amount)],
+      ["原合約金額", twd(record.amount)],
+      ["核准追加減", twd(contractBudget(record).approved)],
+      ["調整後合約金額", twd(contractBudget(record).revised)],
       ["狀態", record.status],
       ["聯絡人", record.contact],
       ["電話", record.phone],
       ["Email", record.email],
       ["地址", record.address],
     ],
+    tables: record.variations?.length ? [{ title: "追加減紀錄", rows: record.variations, columns: [["title", "項目"], ["amount", "金額"], ["status", "狀態"], ["reference", "核准依據"], ["date", "日期"], ["note", "備註"]] }] : [],
     note: record.note,
     attachments: record.attachments,
   };
@@ -4729,9 +4731,7 @@ function ClaimMetric({ title, value, desc }) {
   );
 }
 
-function createClaimDetail() {
-  return { id: Date.now() + Math.random(), item: "", quantity: "", unit: "", unitPrice: "", amount: "", note: "" };
-}
+function createClaimDetail() { return newClaimLine(); }
 
 function createClaimDraft(project, contracts = []) {
   const firstContract = contracts[0];
@@ -4743,7 +4743,7 @@ function createClaimDraft(project, contracts = []) {
     trade: firstContract?.trade || "",
     vendor: firstContract?.vendor || "",
     contract: firstContract?.name || "",
-    contractAmount: firstContract?.amount || "",
+    contractAmount: firstContract ? contractBudget(firstContract).revised : "",
     grossAmount: "",
     retentionAmount: "",
     cleaningFee: "",
@@ -4751,58 +4751,12 @@ function createClaimDraft(project, contracts = []) {
     otherDeduction: "",
     status: "待送審",
     note: "",
-    details: [createClaimDetail()],
+    details: [newClaimLine("work", firstContract ? "base" : "extra")],
     attachments: [],
   };
 }
 
-function ClaimDetailRows({ rows, onChange, onAdd, onRemove }) {
-  const total = claimDetailTotal(rows);
 
-  return (
-    <div className="rounded-2xl border p-4 md:col-span-2">
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="font-bold">請款明細</h3>
-          <p className="mt-1 text-xs text-slate-500">可逐列填工項、數量、單價；若直接填金額，系統會以該金額為準。</p>
-        </div>
-        <Button type="button" variant="outline" onClick={onAdd}>
-          <Plus className="mr-2 h-4 w-4" />
-          新增明細列
-        </Button>
-      </div>
-      <div className="grid gap-3">
-        {rows.map((row, index) => (
-          <div key={row.id} className="rounded-2xl bg-slate-50 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <b>明細 {index + 1}</b>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                disabled={rows.length === 1}
-                onClick={() => onRemove(row.id)}
-              >
-                刪除
-              </Button>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-              <Input value={row.item} onChange={(value) => onChange(row.id, "item", value)} ph="工項 / 品名" />
-              <Input type="number" value={row.quantity} onChange={(value) => onChange(row.id, "quantity", value)} ph="數量" />
-              <Input value={row.unit} onChange={(value) => onChange(row.id, "unit", value)} ph="單位" />
-              <Input type="number" value={row.unitPrice} onChange={(value) => onChange(row.id, "unitPrice", value)} ph="單價" />
-              <Input type="number" value={row.amount} onChange={(value) => onChange(row.id, "amount", value)} ph="金額" />
-              <Input value={row.note} onChange={(value) => onChange(row.id, "note", value)} ph="備註" />
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 rounded-xl bg-slate-900 px-4 py-3 text-right text-sm font-bold text-white">
-        明細合計：{twd(total)}
-      </div>
-    </div>
-  );
-}
 
 function Dashboard({
   p,
@@ -4862,8 +4816,11 @@ function Dashboard({
   );
 }
 
-function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
+function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete, onUpdateContract }) {
   const claimFormRef = useRef(null);
+  const saveLock = useRef(false);
+  const [savingClaim, setSavingClaim] = useState(false);
+  const [claimError, setClaimError] = useState("");
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState(() => createClaimDraft(p, contracts));
   const [editingId, setEditingId] = useState("");
@@ -4874,11 +4831,7 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
     records: true,
   });
   const claimSummary = useMemo(() => summarizeClaims(claims, contracts), [claims, contracts]);
-  const lineTotal = claimDetailTotal(draft.details);
-  const draftGrossAmount = lineTotal || numberValue(draft.grossAmount);
-  const draftDeductionTotal = claimDeductionTotal(draft);
-  const draftNetAmount = Math.max(draftGrossAmount - draftDeductionTotal, 0);
-  const selectedContract = contracts.find((contract) => contract.id === draft.contractId);
+
 
   function setSection(key) {
     setSections((current) => ({ ...current, [key]: !current[key] }));
@@ -4898,8 +4851,10 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
   }
 
   function startEditClaim(claim) {
+    if (savingClaim || (adding && !window.confirm("放棄目前未儲存請款並編輯另一筆？"))) return;
     const normalized = normalizedClaim(claim, contracts);
-    const sourceDetails = claim.details?.length ? claim.details : normalized.details || [];
+    const sourceDetails = legacyClaimRows({ ...claim, sourceType: normalized.temporary ? "temporary" : "contract" });
+    setClaimError("");
     setDraft({
       ...createClaimDraft(p, contracts),
       ...claim,
@@ -4926,85 +4881,21 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
     scrollToClaimForm();
   }
 
-  function applyContract(contractId) {
-    const contract = contracts.find((item) => item.id === contractId);
-    setDraft((current) => ({
-      ...current,
-      sourceType: "contract",
-      contractId,
-      vendor: contract?.vendor || current.vendor,
-      trade: contract?.trade || current.trade,
-      contract: contract?.name || current.contract,
-      contractAmount: contract?.amount || current.contractAmount,
-    }));
-  }
-
-  function updateDetail(id, key, value) {
-    setDraft((current) => ({
-      ...current,
-      details: current.details.map((row) => (row.id === id ? { ...row, [key]: value } : row)),
-    }));
-  }
-
-  function addDetail() {
-    setDraft((current) => ({ ...current, details: [...current.details, createClaimDetail()] }));
-  }
-
-  function removeDetail(id) {
-    setDraft((current) => ({
-      ...current,
-      details: current.details.length === 1 ? current.details : current.details.filter((row) => row.id !== id),
-    }));
-  }
-
   async function saveClaim() {
-    const details = draft.details
-      .filter((row) =>
-        [row.item, row.quantity, row.unit, row.unitPrice, row.amount, row.note].some((value) =>
-          String(value || "").trim(),
-        ),
-      )
-      .map(({ id, ...row }) => ({
-        ...row,
-        amount: claimDetailAmount(row),
-      }));
-    const grossAmount = claimDetailTotal(details) || numberValue(draft.grossAmount);
-    const next = {
-      ...draft,
-      id: editingId || Date.now(),
-      period: draft.period || `第 ${claims.length + 1} 期`,
-      sourceType: draft.sourceType,
-      contractId: draft.sourceType === "contract" ? draft.contractId : "",
-      trade: draft.trade || "未分類工程",
-      vendor: draft.vendor || "未填寫廠商",
-      contract: draft.contract || (draft.sourceType === "temporary" ? "臨時發包" : "未填寫合約"),
-      contractAmount: numberValue(draft.contractAmount),
-      grossAmount,
-      retentionAmount: numberValue(draft.retentionAmount),
-      cleaningFee: numberValue(draft.cleaningFee),
-      insuranceFee: numberValue(draft.insuranceFee),
-      otherDeduction: numberValue(draft.otherDeduction),
-      amount: Math.max(grossAmount - claimDeductionTotal(draft), 0),
-      netAmount: Math.max(grossAmount - claimDeductionTotal(draft), 0),
-      details,
-      attachments: draft.attachments || [],
-      projectId: p.id,
-      projectName: p.name,
-    };
-
-    if (editingId && onUpdate) {
-      await onUpdate(editingId, next, {
-        title: `${next.vendor} ${next.period}`,
-        status: next.status,
-      });
-    } else {
-      await onSave(next, {
-        title: `${next.vendor} ${next.period}`,
-        status: next.status,
-      });
-    }
-    resetDraft();
-    setAdding(false);
+    if (saveLock.current) return;
+    setClaimError("");
+    let next;
+    try {
+      const selected = draft.sourceType === "contract" ? contracts.find(item => item.id === draft.contractId) : null;
+      next = normalizeClaim({ ...draft, id: editingId || Date.now(), period: draft.period || `第 ${claims.length + 1} 期`, projectId: p.id, projectName: p.name }, selected);
+    } catch (error) { setClaimError(error.message); return; }
+    saveLock.current = true; setSavingClaim(true);
+    try {
+      if (editingId && onUpdate) await onUpdate(editingId, next, { title: `${next.vendor} ${next.period}`, status: next.status });
+      else await onSave(next, { title: `${next.vendor} ${next.period}`, status: next.status });
+      resetDraft(); setAdding(false);
+    } catch (error) { setClaimError(error.message || "儲存失敗，請重試"); }
+    finally { saveLock.current = false; setSavingClaim(false); }
   }
 
   const exportControls = useRecordExport({
@@ -5019,201 +4910,27 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
   );
 
   return (
-    <div>
+    <div className="claims-page">
       <Header
         title="廠商請款資料"
         sub={`目前工地：${p.name}，彙整合約請款、臨時發包與各項扣款累計`}
         btn="新增請款"
         onAdd={() => {
-          resetDraft();
+          if (savingClaim || (adding && !window.confirm("放棄目前未儲存請款並新增另一筆？"))) return;
+          setClaimError(""); resetDraft();
           setAdding(true);
           setOpenClaimId("");
           scrollToClaimForm();
         }}
       />
 
-      {adding ? (
-        <div ref={claimFormRef} className="scroll-mt-4">
-          <Card className="mb-4">
-            <CardContent className="grid gap-4 p-5 md:grid-cols-2">
-            <div className="md:col-span-2 grid gap-2 rounded-2xl bg-slate-50 p-3 sm:grid-cols-2">
-              <Button
-                type="button"
-                variant={draft.sourceType === "contract" ? "primary" : "outline"}
-                onClick={() => applyContract(draft.contractId || contracts[0]?.id || "")}
-                disabled={!contracts.length}
-              >
-                合約請款
-              </Button>
-              <Button
-                type="button"
-                variant={draft.sourceType === "temporary" ? "primary" : "outline"}
-                onClick={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    sourceType: "temporary",
-                    contractId: "",
-                    contract: current.contract || "臨時發包",
-                  }))
-                }
-              >
-                無合約 / 臨時發包
-              </Button>
-            </div>
-
-            {draft.sourceType === "contract" ? (
-              <label className="md:col-span-2">
-                <span className="text-sm font-medium">連結工程合約</span>
-                <select
-                  value={draft.contractId}
-                  onChange={(event) => applyContract(event.target.value)}
-                  className="mt-2 w-full rounded-xl border bg-white px-3 py-2 outline-none"
-                >
-                  <option value="">請選擇合約</option>
-                  {contracts.map((contract) => (
-                    <option key={contract.id} value={contract.id}>
-                      {contract.vendor}｜{contract.name}｜{twd(contract.amount)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <div className="md:col-span-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                此模式適合未正式建合約的臨時叫工、追加發包或一次性支出；仍可填入預估發包總額以納入統計。
-              </div>
-            )}
-
-            <label>
-              <span className="text-sm font-medium">廠商名稱</span>
-              <div className="mt-2">
-                <Input value={draft.vendor} onChange={(value) => setDraft({ ...draft, vendor: value })} ph="例如：宏鑫水電" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">工程類別</span>
-              <div className="mt-2">
-                <Input value={draft.trade} onChange={(value) => setDraft({ ...draft, trade: value })} ph="例如：水電工程" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">{draft.sourceType === "temporary" ? "發包名稱" : "合約名稱"}</span>
-              <div className="mt-2">
-                <Input value={draft.contract} onChange={(value) => setDraft({ ...draft, contract: value })} ph="例如：水電配管工程" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">{draft.sourceType === "temporary" ? "預估發包總額" : "合約總額"}</span>
-              <div className="mt-2">
-                <Input type="number" value={draft.contractAmount} onChange={(value) => setDraft({ ...draft, contractAmount: value })} ph="例如：1200000" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">期別</span>
-              <div className="mt-2">
-                <Input value={draft.period} onChange={(value) => setDraft({ ...draft, period: value })} ph="例如：第 1 期" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">請款月份</span>
-              <div className="mt-2">
-                <Input value={draft.month} onChange={(value) => setDraft({ ...draft, month: value })} ph="例如：2026/05" />
-              </div>
-            </label>
-
-            <ClaimDetailRows rows={draft.details} onChange={updateDetail} onAdd={addDetail} onRemove={removeDetail} />
-
-            <label>
-              <span className="text-sm font-medium">請款總額</span>
-              <div className="mt-2">
-                <Input type="number" value={draft.grossAmount} onChange={(value) => setDraft({ ...draft, grossAmount: value })} ph="明細未填金額時可手動輸入" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">保留款</span>
-              <div className="mt-2">
-                <Input type="number" value={draft.retentionAmount} onChange={(value) => setDraft({ ...draft, retentionAmount: value })} ph="例如：10000" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">清潔費</span>
-              <div className="mt-2">
-                <Input type="number" value={draft.cleaningFee} onChange={(value) => setDraft({ ...draft, cleaningFee: value })} ph="例如：3000" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">保險費</span>
-              <div className="mt-2">
-                <Input type="number" value={draft.insuranceFee} onChange={(value) => setDraft({ ...draft, insuranceFee: value })} ph="例如：2000" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">其他扣款</span>
-              <div className="mt-2">
-                <Input type="number" value={draft.otherDeduction} onChange={(value) => setDraft({ ...draft, otherDeduction: value })} ph="例如：0" />
-              </div>
-            </label>
-            <label>
-              <span className="text-sm font-medium">狀態</span>
-              <CustomSelect
-                value={draft.status}
-                onChange={(value) => setDraft({ ...draft, status: value })}
-                options={claimStatusOptions}
-                className="mt-2 space-y-2"
-                otherPlaceholder="請輸入自訂狀態"
-              />
-            </label>
-            <label className="md:col-span-2">
-              <span className="text-sm font-medium">請款備註</span>
-              <textarea
-                value={draft.note}
-                onChange={(event) => setDraft({ ...draft, note: event.target.value })}
-                className="mt-2 min-h-24 w-full rounded-xl border px-3 py-2 outline-none"
-                placeholder="可記錄估驗依據、退回原因、付款條件或臨時發包原因"
-              />
-            </label>
-            <div className="md:col-span-2 grid gap-3 rounded-2xl bg-slate-900 p-4 text-white sm:grid-cols-4">
-              <div>
-                <p className="text-xs text-slate-300">請款總額</p>
-                <p className="mt-1 font-bold">{twd(draftGrossAmount)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-300">扣款合計</p>
-                <p className="mt-1 font-bold">{twd(draftDeductionTotal)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-300">本期應付</p>
-                <p className="mt-1 font-bold">{twd(draftNetAmount)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-300">合約來源</p>
-                <p className="mt-1 font-bold">{selectedContract ? "已連結" : "手動/臨時"}</p>
-              </div>
-            </div>
-            <ImageAttachments
-              className="md:col-span-2"
-              value={draft.attachments}
-              onChange={(attachments) => setDraft({ ...draft, attachments })}
-            />
-            <ActionBar className="md:col-span-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  resetDraft();
-                  setAdding(false);
-                }}
-              >
-                取消
-              </Button>
-              <Button type="button" onClick={saveClaim}>
-                <Save className="mr-2 h-4 w-4" />
-                {editingId ? "更新請款" : "儲存請款"}
-              </Button>
-            </ActionBar>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
+      {adding && <div ref={claimFormRef} className="scroll-mt-20">
+        <ClaimEditor draft={draft} setDraft={setDraft} contracts={contracts} claims={claims} editingId={editingId} saving={savingClaim} error={claimError}
+          onSave={saveClaim} onCancel={() => { if (window.confirm("取消後不保留未儲存的請款，確定取消？")) { resetDraft(); setAdding(false); } }}
+          onUpdateContract={onUpdateContract}>
+          <ImageAttachments value={draft.attachments || []} onChange={attachments => setDraft(current => ({ ...current, attachments }))} />
+        </ClaimEditor>
+      </div>}
 
       <div className="grid gap-4">
         <AccordionSection
@@ -5224,9 +4941,9 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
           onToggle={() => setSection("summary")}
         >
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <ClaimMetric title="合約總額" value={twd(claimSummary.totals.contractTotal)} desc="工程合約 + 臨時發包估算" />
+            <ClaimMetric title="調整後合約 / 發包額" value={twd(claimSummary.totals.contractTotal)} desc="原約 + 核准追加減 + 臨時發包估算" />
             <ClaimMetric title="請款總額" value={twd(claimSummary.totals.grossAmount)} desc="所有期別原始請款合計" />
-            <ClaimMetric title="已請款總額" value={twd(claimSummary.totals.paidAmount)} desc="已付款 / 已結案金額" />
+            <ClaimMetric title="已付款總額" value={twd(claimSummary.totals.paidAmount)} desc="已付款 / 已結案金額" />
             <ClaimMetric title="本期應付累計" value={twd(claimSummary.totals.netAmount)} desc="請款扣除保留款與費用後" />
             <ClaimMetric title="保留款總額" value={twd(claimSummary.totals.retentionAmount)} />
             <ClaimMetric title="清潔費總額" value={twd(claimSummary.totals.cleaningFee)} />
@@ -5341,12 +5058,12 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
                             title="請款明細"
                             rows={(claim.details || []).map((row, index) => ({
                               index: index + 1,
-                              item: row.item,
+                              item: `${expenseKinds[row.category] || "工程款"}｜${budgetSources[row.budgetSource] || "原合約內"}${row.variationTitle ? `：${row.variationTitle}` : ""}\n${row.item}`,
                               quantity: row.quantity,
                               unit: row.unit,
                               unitPrice: row.unitPrice ? twd(row.unitPrice) : "",
                               amount: twd(claimDetailAmount(row)),
-                              note: row.note,
+                              note: [row.workDate, row.reference, row.note].filter(Boolean).join("｜"),
                             }))}
                             columns={[
                               ["index", "序"],
@@ -5358,6 +5075,7 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
                               ["note", "備註"],
                             ]}
                           />
+                          {claim.accountingVersion === 2 && <div className="flex flex-wrap gap-2">{Object.entries(expenseTotals(claim.details)).map(([key, value]) => <Badge key={key}>{expenseKinds[key]} {twd(value)}</Badge>)}</div>}
                           {claim.note ? (
                             <div className="rounded-2xl border p-4">
                               <h4 className="font-bold">請款備註</h4>
@@ -5386,6 +5104,9 @@ function Claims({ p, claims, contracts = [], onSave, onUpdate, onDelete }) {
 
 function Contracts({ p, items, onSave, onUpdate, onDelete }) {
   const [adding, setAdding] = useState(false);
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const emptyDraft = {
     name: "",
     vendor: "",
@@ -5398,12 +5119,14 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
     address: "",
     note: "",
     attachments: [],
+    variations: [],
   };
   const [draft, setDraft] = useState(emptyDraft);
   const [editingId, setEditingId] = useState("");
 
   function resetDraft() {
     setDraft(emptyDraft);
+    setError("");
     setEditingId("");
   }
 
@@ -5419,7 +5142,17 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
   }
 
   async function saveContract() {
+    if (savingRef.current) return;
+    setError("");
+    let variations;
+    try { variations = normalizeVariations({ ...draft, amount: draft.amount || 0 }); }
+    catch (error) { setError(error.message); return; }
+    savingRef.current = true; setSaving(true);
+    try {
     const next = {
+      ...draft,
+      variations,
+      variationVersion: 1,
       id: editingId || Date.now(),
       projectId: p.id,
       projectName: p.name,
@@ -5442,6 +5175,8 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
     }
     resetDraft();
     setAdding(false);
+    } catch (error) { setError(error.message || "儲存失敗，內容已保留"); }
+    finally { savingRef.current = false; setSaving(false); }
   }
 
   const exportControls = useRecordExport({
@@ -5473,7 +5208,7 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
                 <Badge>{contract.trade}</Badge>
               </div>
               <p className="mt-2 text-sm text-slate-500">
-                廠商：{contract.vendor}｜金額：{twd(contract.amount)}
+                廠商：{contract.vendor}｜原約：{twd(contract.amount)}｜核准追加減：{twd(contractBudget(contract).approved)}｜調整後：{twd(contractBudget(contract).revised)}
               </p>
               <p className="text-sm text-slate-500">
                 聯絡人：{contract.contact || "未填寫"}｜電話：{contract.phone || "未填寫"}
@@ -5507,6 +5242,7 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
     >
       {adding ? (
         <Card className="mb-4">
+          <fieldset disabled={saving}>
           <CardContent className="grid gap-4 p-5 md:grid-cols-2">
             <label>
               <span className="text-sm font-medium">合約名稱</span>
@@ -5539,7 +5275,7 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
               </div>
             </label>
             <label>
-              <span className="text-sm font-medium">合約金額</span>
+              <span className="text-sm font-medium">原合約金額（不含追加減）</span>
               <div className="mt-2">
                 <Input
                   type="number"
@@ -5609,6 +5345,8 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
                 placeholder="付款條件、保固、現場窗口補充"
               />
             </label>
+            <section className="md:col-span-2 claim-block claim-blue"><h3>合約追加減紀錄</h3><VariationRows value={draft.variations || []} onChange={variations => setDraft(current => ({ ...current, variations }))} /><p className="font-bold">調整後合約總額：{twd(contractBudget(draft).revised)}</p></section>
+            {error && <p role="alert" className="md:col-span-2 claim-warning">{error}</p>}
             <ImageAttachments
               className="md:col-span-2"
               value={draft.attachments}
@@ -5627,10 +5365,11 @@ function Contracts({ p, items, onSave, onUpdate, onDelete }) {
               </Button>
               <Button type="button" onClick={saveContract}>
                 <Save className="mr-2 h-4 w-4" />
-                {editingId ? "更新合約" : "儲存合約"}
+                {saving ? "儲存中…" : editingId ? "更新合約" : "儲存合約"}
               </Button>
             </ActionBar>
           </CardContent>
+          </fieldset>
         </Card>
       ) : null}
     </ListPage>
@@ -8606,6 +8345,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
   const panelRef = useRef(null);
   const triggerRef = useRef(null);
   const [users, setUsers] = useState(adminSeedUsers.map(normalizeAccountPermissions));
+  const [accountGroups, setAccountGroups] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -8639,7 +8379,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
     let active = true;
     apiFetch("/api/users")
       .then((data) => {
-        if (active) setUsers((data.users || []).map(normalizeAccountPermissions));
+        if (active) { setUsers((data.users || []).map(normalizeAccountPermissions)); setAccountGroups(data.groups || []); }
       })
       .catch((err) => {
         if (active) setError(err.message);
@@ -8676,7 +8416,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
   const filteredUsers = sortedUsers.filter((user) => {
     const keyword = accountQuery.trim().toLowerCase();
     const matchesOrganization =
-      organizationFilter === "all" || user.organizationName === organizationFilter;
+      organizationFilter === "all" || (organizationFilter === 'unassigned' ? !user.groupId : user.groupId === organizationFilter);
     if (!matchesOrganization) return false;
     if (!keyword) return true;
     return [
@@ -8711,6 +8451,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
       setError("請選擇所屬單位");
       return;
     }
+    if (draft.role === 'admin' && !window.confirm('此帳號將擁有跨公司、跨工地的最高管理權限，不只是群組主管。確認建立？')) return;
 
     const next = normalizeAccountPermissions({
       ...draft,
@@ -8768,6 +8509,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
 
   async function updatePermission(user, patch) {
     if (user.role === "admin") return;
+    if (patch.role === 'admin' && !window.confirm('這會授予跨公司、跨工地的全系統最高管理權限，且目前不支援降級。若只是公司主管，請改用群組階級。確認升級？')) return;
     setError("");
     setNotice("");
     const updated = normalizeAccountPermissions({ ...user, ...patch });
@@ -8776,14 +8518,34 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
     if (useLocalPreview) return;
 
     try {
-      await apiFetch(`/api/users/${user.id}`, {
+      const data = await apiFetch(`/api/users/${user.id}`, {
         method: "PATCH",
         body: JSON.stringify(patch),
       });
+      setUsers(current => current.map(item => item.id === user.id ? normalizeAccountPermissions(data.user) : item));
     } catch (err) {
       setError(err.message);
       setUsers(users);
     }
+  }
+
+  async function saveGroup(group) {
+    if (useLocalPreview) {
+      const saved = { ...group, id: group.id || crypto.randomUUID(), version: (group.version || 0) + 1 };
+      setAccountGroups(current => [...current.filter(item => item.id !== saved.id), saved]); return;
+    }
+    const data = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ action: 'save-group', group }) });
+    setAccountGroups(data.groups); setUsers(data.users.map(normalizeAccountPermissions));
+    setNotice('群組設定已儲存，成員於下一次操作套用新權限');
+  }
+
+  async function assignGroup(user, patch) {
+    const group = accountGroups.find(item => item.id === patch.groupId);
+    const data = useLocalPreview ? { user: { ...user, ...patch, organizationName: group?.name || user.organizationName, groupRoleName: group?.roles.find(role => role.id === patch.groupRoleId)?.name || '' } }
+      : await apiFetch(`/api/users/${user.id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    setUsers(current => current.map(item => item.id === user.id ? normalizeAccountPermissions(data.user) : item));
+    if (user.id === currentUser.id) onUserUpdate(data.user);
+    setNotice('帳號群組與階級已更新；既有工地授權維持不變');
   }
 
   async function changeOwnPassword() {
@@ -9074,19 +8836,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                     onChange={(value) => setDraft({ ...draft, email: value })}
                     ph="Email 帳號"
                   />
-                  <select
-                    value={draft.organizationName}
-                    onChange={(event) =>
-                      setDraft({ ...draft, organizationName: event.target.value })
-                    }
-                    className="w-full rounded-xl border bg-white px-3 py-2 outline-none"
-                  >
-                    {organizationOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="grid gap-1 text-sm">所屬單位名稱<input value={draft.organizationName} maxLength={80} onChange={event => setDraft({ ...draft, organizationName: event.target.value })} className="w-full rounded-xl border bg-white px-3 py-2 text-base" placeholder="輸入公司名稱；建立後至帳號列表指定群組" /></label>
                   <Input
                     type="password"
                     value={draft.password}
@@ -9101,7 +8851,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                     className="w-full rounded-xl border bg-white px-3 py-2 outline-none"
                   >
                     <option value="member">一般帳號</option>
-                    <option value="admin">管理員</option>
+                    <option value="admin">全系統最高管理員（跨群組）</option>
                   </select>
                   <label className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm">
                     <input
@@ -9145,6 +8895,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                 open={sections.users}
                 onToggle={() => toggleSection("users")}
               >
+                <AccountGroups groups={accountGroups} users={users} onSave={saveGroup} />
                 <div className="grid gap-3">
                   <div className="grid gap-3 rounded-2xl bg-slate-50 p-3 lg:grid-cols-[1fr_180px_auto]">
                     <div className="flex items-center gap-3 rounded-xl border bg-white px-3 py-2">
@@ -9161,12 +8912,9 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                       onChange={(event) => setOrganizationFilter(event.target.value)}
                       className="w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none"
                     >
-                      <option value="all">全部單位</option>
-                      {organizationOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
+                      <option value="all">全部群組</option>
+                      <option value="unassigned">未分組</option>
+                      {accountGroups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
                     </select>
                     <Button
                       type="button"
@@ -9195,6 +8943,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                         <h3 className="font-bold">{user.name}</h3>
                         <Badge>會員 {user.memberNumber || "未編號"}</Badge>
                         {user.organizationName ? <Badge>{user.organizationName}</Badge> : null}
+                        <Badge>{user.groupId ? user.groupRoleName : '尚未分組'}</Badge>
                         <Badge>{isAdmin ? "管理員" : "一般帳號"}</Badge>
                         {isAdmin ? <Badge>最高權限</Badge> : null}
                         {!isAdmin ? <Badge>{user.canEdit ? "可編輯" : user.canView ? "僅閱覽" : "未開放"}</Badge> : null}
@@ -9218,6 +8967,7 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                   </div>
                   {userOpen ? (
                   <>
+                  <AccountGroupAssignment key={`${user.id}-${user.groupId}-${user.groupRoleId}`} user={user} groups={accountGroups} onSave={assignGroup} />
                   <div className="mt-4 grid gap-2 rounded-2xl bg-slate-50 p-4 text-sm sm:grid-cols-2 xl:grid-cols-6">
                     <div>
                       <p className="text-xs font-medium text-slate-500">會員編號</p>
@@ -9247,17 +8997,18 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     <select
                       value={user.role}
+                      aria-label="全系統帳號角色"
                       onChange={(event) => updatePermission(user, { role: event.target.value })}
                       disabled={isAdmin}
                       className="rounded-xl border bg-white px-3 py-2 text-sm outline-none disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                     >
                       <option value="member">一般帳號</option>
-                      <option value="admin">管理員</option>
+                      <option value="admin">全系統最高管理員（跨群組）</option>
                     </select>
                     <label className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
                       <input
                         type="checkbox"
-                        checked={isAdmin || Boolean(user.canView)}
+                        checked={isAdmin || Boolean(user.accountCanView ?? user.canView)}
                         disabled={isAdmin}
                         onChange={(event) => updatePermission(user, { canView: event.target.checked })}
                       />
@@ -9266,8 +9017,8 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                     <label className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
                       <input
                         type="checkbox"
-                        checked={isAdmin || Boolean(user.canEdit)}
-                        disabled={isAdmin || !user.canView}
+                        checked={isAdmin || Boolean(user.accountCanEdit ?? user.canEdit)}
+                        disabled={isAdmin || !(user.accountCanView ?? user.canView)}
                         onChange={(event) => updatePermission(user, { canEdit: event.target.checked })}
                       />
                       編輯
@@ -9811,6 +9562,7 @@ export default function App() {
           onSave={(item, options) => claimRecords.saveItem(item, options)}
           onUpdate={(id, item, options) => claimRecords.updateItem(id, item, options)}
           onDelete={claimRecords.deleteItem}
+          onUpdateContract={p.canViewContracts !== false ? (contract) => contractRecords.updateItem(contract.id, contract, { title: contract.name, status: contract.status }) : undefined}
         />
       );
     }

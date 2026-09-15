@@ -1,11 +1,14 @@
-import { emailVerificationRequired, hashPassword, requireUser } from "../_lib/auth.js";
+import { emailVerificationRequired, hashPassword } from "../_lib/auth.js";
 import {
   createEmailVerificationToken,
   ensureSchema,
   insertUser,
   listUsers,
   mapUser,
+  listAccountGroups,
+  saveAccountGroup,
 } from "../_lib/db.js";
+import { requireSystemAdmin } from '../_lib/permissions.js';
 import {
   emailProviderConfigured,
   sendVerificationEmail,
@@ -19,25 +22,15 @@ import {
   readJson,
 } from "../_lib/http.js";
 
-const organizationOptions = new Set(["測試分組1", "測試分組2", "測試分組3"]);
-
 function normalizeOrganizationName(value) {
   const organizationName = String(value || "").trim();
   if (!organizationName) {
     throw new ApiError(400, "請選擇所屬單位", "ORGANIZATION_REQUIRED");
   }
-  if (!organizationOptions.has(organizationName)) {
-    throw new ApiError(400, "所屬單位選項無效", "ORGANIZATION_INVALID");
+  if (organizationName.length > 80) {
+    throw new ApiError(400, "所屬單位最多 80 字", "ORGANIZATION_INVALID");
   }
   return organizationName;
-}
-
-function requireAdmin(request) {
-  const user = requireUser(request);
-  if (user.role !== "admin") {
-    throw new ApiError(403, "需要管理員權限", "ADMIN_REQUIRED");
-  }
-  return user;
 }
 
 export default {
@@ -47,14 +40,18 @@ export default {
     }
 
     try {
-      requireAdmin(request);
       await ensureSchema();
+      await requireSystemAdmin(request);
 
       if (request.method === "GET") {
-        return json({ users: await listUsers() });
+        return json({ users: await listUsers(), groups: await listAccountGroups() });
       }
 
       const body = await readJson(request);
+      if (body.action === 'save-group') {
+        const group = await saveAccountGroup(body.group || {});
+        return json({ group, groups: await listAccountGroups(), users: await listUsers() });
+      }
       if (!body.email?.trim() || !body.name?.trim() || !body.password) {
         throw new ApiError(400, "請輸入姓名、帳號與密碼", "USER_FIELDS_REQUIRED");
       }
