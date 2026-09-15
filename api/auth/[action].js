@@ -22,6 +22,7 @@ import {
   findUserByEmail,
   findUserById,
   insertUser,
+  listCompanyOptions,
   markUserLogin,
   passwordResetCooldownSeconds,
   reservePasswordResetCooldown,
@@ -41,19 +42,6 @@ import {
 
 import calendarFeed from "../_lib/calendar-feed-handler.js";
 import calendarSubscriptions from "../_lib/calendar-subscriptions-handler.js";
-
-const organizationOptions = new Set(["測試分組1", "測試分組2", "測試分組3"]);
-
-function normalizeOrganizationName(value) {
-  const organizationName = String(value || "").trim();
-  if (!organizationName) {
-    throw new ApiError(400, "請選擇所屬單位", "ORGANIZATION_REQUIRED");
-  }
-  if (!organizationOptions.has(organizationName)) {
-    throw new ApiError(400, "所屬單位選項無效", "ORGANIZATION_INVALID");
-  }
-  return organizationName;
-}
 
 function actionFromUrl(url) {
   const parts = new URL(url).pathname.split("/").filter(Boolean);
@@ -135,11 +123,10 @@ async function me(request) {
 async function register(request) {
   if (request.method !== "POST") return methodNotAllowed(["POST"]);
 
-  const { email, password, name, organizationName } = await readJson(request);
+  const { email, password, name, organizationName, groupId } = await readJson(request);
   if (!email?.trim() || !password || !name?.trim()) {
     throw new ApiError(400, "請輸入姓名、帳號與密碼", "REGISTER_FIELDS_REQUIRED");
   }
-  const cleanOrganizationName = normalizeOrganizationName(organizationName);
   if (password.length < 8) {
     throw new ApiError(400, "密碼至少需要 8 碼", "PASSWORD_TOO_SHORT");
   }
@@ -163,7 +150,8 @@ async function register(request) {
   const user = await insertUser({
     email,
     name,
-    organizationName: cleanOrganizationName,
+    organizationName,
+    groupId,
     passwordHash: await hashPassword(password),
     canView: true,
     canEdit: true,
@@ -406,6 +394,12 @@ export default {
       if (action === "logout") return await logout(request);
       if (action === "me") return await me(request);
       if (action === "register") return await register(request);
+      if (action === 'groups') {
+        if (request.method !== 'GET') return methodNotAllowed(['GET']);
+        await ensureSchema();
+        // Registration exposes only selectable company names/IDs, never accounts or tiers.
+        return json({ groups: await listCompanyOptions() });
+      }
       if (action === "password") return await changePassword(request);
       if (action === "profile") return await updateProfile(request);
       if (action === "resend-verification") return await resendVerification(request);

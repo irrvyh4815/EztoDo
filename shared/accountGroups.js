@@ -7,7 +7,7 @@ export const defaultGroupRoles = () => [
 export function normalizeGroup(input, previous) {
   const name = String(input.name || '').trim();
   if (!name || name.length > 80) throw new Error('群組名稱請填寫 1～80 字');
-  if (!Array.isArray(input.roles) || !input.roles.length || input.roles.length > 20) throw new Error('每組需有 1～20 個權限階級');
+  if (!Array.isArray(input.roles) || !input.roles.length || input.roles.length > 32) throw new Error('每組需有 1～32 個權限階級');
   const ids = new Set(), names = new Set(), ranks = new Set();
   const roles = input.roles.map(role => {
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(role.id || '') || ids.has(role.id)) throw new Error('階級編號無效或重複');

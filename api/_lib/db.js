@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { hashPassword } from "./auth.js";
 import { ApiError } from "./http.js";
 import { applyGroupPermissions, normalizeGroup } from "../../shared/accountGroups.js";
+import { migrateLegacyGroups } from './legacy-groups.js';
 
 const { Pool } = pg;
 
@@ -335,7 +336,6 @@ async function initializeSchema() {
   await query("alter table users add column if not exists group_id text references account_groups(id)");
   await query("alter table users add column if not exists group_role_id text");
   await query("create index if not exists users_group_idx on users (group_id)");
-  await query("update users set organization_name = '測試分組1' where organization_name is null or organization_name = ''");
   await query("alter table users add column if not exists email_verified boolean");
   await query("alter table users add column if not exists email_verified_at timestamptz");
   await query("alter table users add column if not exists email_verification_token_hash text");
@@ -450,6 +450,8 @@ async function initializeSchema() {
   `);
 
   await backfillProjectOwnership();
+  const migrationClient = await getPool().connect();
+  try { await migrateLegacyGroups(migrationClient); } finally { migrationClient.release(); }
 }
 
 export async function ensureSchema() {
@@ -488,6 +490,10 @@ export async function listAccountGroups() {
   return result.rows;
 }
 
+export async function listCompanyOptions() {
+  return (await query('select id, name from account_groups order by name, id')).rows;
+}
+
 export async function saveAccountGroup(input) {
   const previous = input.id ? (await query('select * from account_groups where id = $1', [input.id])).rows[0] : null;
   if (input.id && !previous) throw new ApiError(404, '找不到群組', 'GROUP_NOT_FOUND');
@@ -507,7 +513,8 @@ export async function saveAccountGroup(input) {
 export async function assignAccountGroup(id, groupId, roleId) {
   if (typeof groupId !== 'string' || typeof roleId !== 'string' || (!groupId && roleId)) throw new ApiError(400, '請選擇有效群組與階級', 'INVALID_GROUP_ASSIGNMENT');
   // Validate membership in the selected group's roles in the same statement as the write.
-  const result = await query(`update users set group_id = nullif($2, ''), group_role_id = nullif($3, '')
+  const result = await query(`update users set group_id = nullif($2, ''), group_role_id = nullif($3, ''),
+    organization_name = coalesce((select name from account_groups where id = $2), '')
     where id = $1 and ($2 = '' or exists (select 1 from account_groups g, jsonb_array_elements(g.roles) r where g.id = $2 and r->>'id' = $3)) returning *`, [id, groupId, roleId]);
   if (!result.rows[0]) throw new ApiError(400, '帳號、群組或階級不存在，請重新載入後再試', 'INVALID_GROUP_ASSIGNMENT');
   return mapUser(await hydrateUserGroup(result.rows[0]));
@@ -517,6 +524,8 @@ export async function insertUser({
   email,
   name,
   organizationName = "",
+  groupId = "",
+  groupRoleId = "",
   passwordHash,
   role = "member",
   canView = true,
@@ -531,29 +540,37 @@ export async function insertUser({
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    const selected = groupId
+      ? await client.query('select * from account_groups where id = $1 for share', [groupId])
+      : await client.query('select * from account_groups where lower(name) = lower($1) for share', [String(organizationName).trim()]);
+    const group = selected.rows[0];
+    const groupRole = groupRoleId ? group?.roles.find(role => role.id === groupRoleId) : [...(group?.roles || [])].sort((a,b)=>a.rank-b.rank)[0];
+    if (!group || !groupRole) throw new ApiError(400, '請選擇有效的公司群組與階級', 'INVALID_GROUP_ASSIGNMENT');
     const memberNumber = await nextMemberNumber(client);
     const result = await client.query(
       `insert into users (
          id, email, name, member_no, organization_name, password_hash, role, can_view, can_edit,
-         email_verified, email_verified_at
+         email_verified, email_verified_at, group_id, group_role_id
        )
-       values ($1, lower($2), $3, $4, $5, $6, $7, $8, $9, $10, case when $10 then now() else null end)
+       values ($1, lower($2), $3, $4, $5, $6, $7, $8, $9, $10, case when $10 then now() else null end, $11, $12)
        returning *`,
       [
         randomUUID(),
         email,
         name,
         memberNumber,
-        organizationName,
+        group.name,
         passwordHash,
         normalizedRole,
         normalizedCanView,
         normalizedCanEdit,
         normalizedEmailVerified,
+        group.id,
+        groupRole.id,
       ],
     );
     await client.query("commit");
-    return result.rows[0];
+    return applyGroupPermissions(result.rows[0], group);
   } catch (error) {
     await client.query("rollback");
     throw error;

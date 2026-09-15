@@ -8,6 +8,7 @@ import { DailyField, DailySection } from "./DailyFormParts.jsx";
 import TaskEditor from "./TaskEditor.jsx";
 import ClaimEditor, { newClaimLine, VariationRows } from "./ClaimEditor.jsx";
 import AccountGroups, { AccountGroupAssignment } from './AccountGroups.jsx';
+import { defaultGroupRoles } from '../shared/accountGroups.js';
 import { budgetSources, contractBudget, expenseKinds, expenseTotals, legacyClaimRows, lineAmount, lineTotal, normalizeClaim, normalizeVariations } from "../shared/claimAccounting.js";
 import { createTimedTaskDraft, normalizeTimedTask, taskBaseAt, taskPeriodLabel, reminderLabel, reminderPreview } from "../shared/taskTiming.js";
 import useDraftProtection, { confirmWorkspaceLeave } from "./useDraftProtection.js";
@@ -148,11 +149,11 @@ const mods = [
   ["photos", "照片中心"],
 ].map(([id, label]) => ({ id, label, icon: I[id] }));
 
-const APP_VERSION = "eztodo_26091501";
+const APP_VERSION = "eztodo_26091502";
 const DAILY_AI_SOURCE_MAX_BYTES = 3 * 1024 * 1024;
 
 const projectStatusOptions = ["籌備中", "進行中", "收尾中", "暫停", "結案"];
-const organizationOptions = ["測試分組1", "測試分組2", "測試分組3"];
+const previewAccountGroups = ['測試分組1','測試分組2','測試分組3'].map((name,index)=>({id:`preview-company-${index+1}`,name,roles:defaultGroupRoles(),version:1}));
 const meetingTypeOptions = ["工具箱會議", "承攬商會議", "工務會議", "協議組織會議"];
 const memberNumberPrefix = "26";
 const projectJobTitleOptions = [
@@ -246,6 +247,8 @@ function defaultAccountDraft() {
     name: "",
     email: "",
     organizationName: "",
+    groupId: "",
+    groupRoleId: "",
     password: "",
     role: "member",
     canView: true,
@@ -3150,7 +3153,10 @@ function LoginScreen({ onLogin }) {
   const initialResetToken = passwordResetTokenFromLocation();
   const [mode, setMode] = useState(initialResetToken ? "reset" : "login");
   const [name, setName] = useState("");
-  const [organizationName, setOrganizationName] = useState(organizationOptions[0]);
+  const [registrationGroupId, setRegistrationGroupId] = useState('');
+  const [registrationGroups, setRegistrationGroups] = useState([]);
+  const [companyOptionsError, setCompanyOptionsError] = useState('');
+  const [companyOptionsRetry, setCompanyOptionsRetry] = useState(0);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -3166,6 +3172,16 @@ function LoginScreen({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const loginTags = ["工地管理", "施工日報", "廠商請款", "缺失追蹤", "甘特圖", "照片附件"];
+
+  useEffect(() => {
+    if (mode !== 'register') return;
+    let active = true;
+    setCompanyOptionsError('');
+    apiFetch('/api/auth/groups').then(data => {
+      if (active) { setRegistrationGroups(data.groups || []); setRegistrationGroupId(current => (data.groups || []).some(group=>group.id===current) ? current : ''); }
+    }).catch(err => { if (active) { setRegistrationGroups([]); setCompanyOptionsError(err.message); } });
+    return () => { active = false; };
+  }, [mode, companyOptionsRetry]);
 
   useEffect(() => {
     if (passwordResetCooldown <= 0) return undefined;
@@ -3229,7 +3245,7 @@ function LoginScreen({ onLogin }) {
         if (!name.trim()) {
           throw new Error("請輸入暱稱 / 姓名");
         }
-        if (!organizationName) {
+        if (!registrationGroupId) {
           throw new Error("請選擇所屬單位");
         }
         if (password.length < 8) {
@@ -3241,7 +3257,7 @@ function LoginScreen({ onLogin }) {
 
         const data = await apiFetch("/api/auth/register", {
           method: "POST",
-          body: JSON.stringify({ name, email, password, organizationName }),
+          body: JSON.stringify({ name, email, password, groupId: registrationGroupId }),
         });
 
         if (data.emailVerificationRequired) {
@@ -3383,19 +3399,18 @@ function LoginScreen({ onLogin }) {
               ) : null}
               {mode === "register" ? (
                 <label>
-                  <span className="text-sm font-medium">所屬單位</span>
+                  <span className="text-sm font-medium">公司群組（原所屬單位）</span>
                   <select
-                    value={organizationName}
-                    onChange={(event) => setOrganizationName(event.target.value)}
+                    value={registrationGroupId}
+                    onChange={(event) => setRegistrationGroupId(event.target.value)}
                     className="mt-2 w-full rounded-xl border bg-white px-3 py-2 outline-none"
                     required
                   >
-                    {organizationOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
+                    <option value="">請選擇公司群組</option>
+                    {registrationGroups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
                   </select>
+                  <span className="mt-1 block text-xs text-slate-500">由系統管理員統一維護；新帳號採群組最低階級，不會自動取得工地授權。</span>
+                  {companyOptionsError && <span className="block text-sm text-red-700">{companyOptionsError}<button type="button" className="ml-2 underline" onClick={()=>setCompanyOptionsRetry(value=>value+1)}>重新載入群組</button></span>}
                 </label>
               ) : null}
               {mode !== "reset" ? (
@@ -8344,8 +8359,8 @@ function Placeholder({ title, p, recordsApi }) {
 function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange }) {
   const panelRef = useRef(null);
   const triggerRef = useRef(null);
-  const [users, setUsers] = useState(adminSeedUsers.map(normalizeAccountPermissions));
-  const [accountGroups, setAccountGroups] = useState([]);
+  const [users, setUsers] = useState(useLocalPreview ? adminSeedUsers.map(user=>normalizeAccountPermissions({...user,groupId:previewAccountGroups.find(group=>group.name===user.organizationName)?.id,groupRoleId:user.canEdit?'manager':'viewer',groupRoleName:user.canEdit?'群組管理級':'閱覽級'})) : []);
+  const [accountGroups, setAccountGroups] = useState(useLocalPreview ? previewAccountGroups : []);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -8447,14 +8462,16 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
       setError("初始密碼至少需要 8 碼");
       return;
     }
-    if (!draft.organizationName) {
-      setError("請選擇所屬單位");
+    if (!draft.groupId || !draft.groupRoleId) {
+      setError("請選擇公司群組及階級");
       return;
     }
     if (draft.role === 'admin' && !window.confirm('此帳號將擁有跨公司、跨工地的最高管理權限，不只是群組主管。確認建立？')) return;
 
     const next = normalizeAccountPermissions({
       ...draft,
+      organizationName: accountGroups.find(group=>group.id===draft.groupId)?.name || '',
+      groupRoleName: accountGroups.find(group=>group.id===draft.groupId)?.roles.find(role=>role.id===draft.groupRoleId)?.name || '',
       id: `user-${Date.now()}`,
       memberNumber: nextPreviewMemberNumber(users),
       name: draft.name || "未命名使用者",
@@ -8532,16 +8549,20 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
   async function saveGroup(group) {
     if (useLocalPreview) {
       const saved = { ...group, id: group.id || crypto.randomUUID(), version: (group.version || 0) + 1 };
-      setAccountGroups(current => [...current.filter(item => item.id !== saved.id), saved]); return;
+      setAccountGroups(current => [...current.filter(item => item.id !== saved.id), saved]);
+      setUsers(current=>current.map(user=>user.groupId===saved.id ? {...user,organizationName:saved.name,groupRoleName:saved.roles.find(role=>role.id===user.groupRoleId)?.name || ''} : user));
+      return;
     }
     const data = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ action: 'save-group', group }) });
     setAccountGroups(data.groups); setUsers(data.users.map(normalizeAccountPermissions));
+    const refreshedUser = data.users.find(user=>user.id===currentUser.id);
+    if (refreshedUser) onUserUpdate({...currentUser,...refreshedUser});
     setNotice('群組設定已儲存，成員於下一次操作套用新權限');
   }
 
   async function assignGroup(user, patch) {
     const group = accountGroups.find(item => item.id === patch.groupId);
-    const data = useLocalPreview ? { user: { ...user, ...patch, organizationName: group?.name || user.organizationName, groupRoleName: group?.roles.find(role => role.id === patch.groupRoleId)?.name || '' } }
+    const data = useLocalPreview ? { user: { ...user, ...patch, organizationName: group?.name || '', groupRoleName: group?.roles.find(role => role.id === patch.groupRoleId)?.name || '' } }
       : await apiFetch(`/api/users/${user.id}`, { method: 'PATCH', body: JSON.stringify(patch) });
     setUsers(current => current.map(item => item.id === user.id ? normalizeAccountPermissions(data.user) : item));
     if (user.id === currentUser.id) onUserUpdate(data.user);
@@ -8836,7 +8857,8 @@ function AdminPanel({ currentUser, onLogout, onUserUpdate, open, onOpenChange })
                     onChange={(value) => setDraft({ ...draft, email: value })}
                     ph="Email 帳號"
                   />
-                  <label className="grid gap-1 text-sm">所屬單位名稱<input value={draft.organizationName} maxLength={80} onChange={event => setDraft({ ...draft, organizationName: event.target.value })} className="w-full rounded-xl border bg-white px-3 py-2 text-base" placeholder="輸入公司名稱；建立後至帳號列表指定群組" /></label>
+                  <label className="grid gap-1 text-sm">公司群組<select value={draft.groupId} onChange={event => { const group=accountGroups.find(group=>group.id===event.target.value); setDraft({...draft,groupId:event.target.value,groupRoleId:group ? [...group.roles].sort((a,b)=>a.rank-b.rank)[0].id : ''}); }} className="w-full rounded-xl border bg-white px-3 py-2 text-base"><option value="">請選擇公司群組</option>{accountGroups.map(group=><option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+                  <label className="grid gap-1 text-sm">群組內階級<select value={draft.groupRoleId} disabled={!draft.groupId} onChange={event=>setDraft({...draft,groupRoleId:event.target.value})} className="w-full rounded-xl border bg-white px-3 py-2 text-base"><option value="">請選擇階級</option>{accountGroups.find(group=>group.id===draft.groupId)?.roles.map(role=><option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
                   <Input
                     type="password"
                     value={draft.password}

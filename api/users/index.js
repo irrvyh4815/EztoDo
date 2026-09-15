@@ -22,17 +22,6 @@ import {
   readJson,
 } from "../_lib/http.js";
 
-function normalizeOrganizationName(value) {
-  const organizationName = String(value || "").trim();
-  if (!organizationName) {
-    throw new ApiError(400, "請選擇所屬單位", "ORGANIZATION_REQUIRED");
-  }
-  if (organizationName.length > 80) {
-    throw new ApiError(400, "所屬單位最多 80 字", "ORGANIZATION_INVALID");
-  }
-  return organizationName;
-}
-
 export default {
   async fetch(request) {
     if (!["GET", "POST"].includes(request.method)) {
@@ -55,7 +44,6 @@ export default {
       if (!body.email?.trim() || !body.name?.trim() || !body.password) {
         throw new ApiError(400, "請輸入姓名、帳號與密碼", "USER_FIELDS_REQUIRED");
       }
-      const organizationName = normalizeOrganizationName(body.organizationName);
       if (body.password.length < 8) {
         throw new ApiError(400, "密碼至少需要 8 碼", "PASSWORD_TOO_SHORT");
       }
@@ -74,7 +62,9 @@ export default {
       const user = await insertUser({
         email: body.email,
         name: body.name,
-        organizationName,
+        organizationName: body.organizationName,
+        groupId: body.groupId,
+        groupRoleId: body.groupRoleId,
         passwordHash: await hashPassword(body.password),
         role: body.role || "member",
         canView: body.canView ?? true,
